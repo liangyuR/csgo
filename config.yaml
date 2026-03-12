@@ -1,0 +1,29 @@
+# Real-time aim config
+# Edit this file and run:  python main.py realtime --config config.yaml
+
+capture:
+  method: mss           # mss (recommended)
+  region: full          # full | center_crop
+  center_crop_size: 640 # pixels, only used when region: center_crop
+  monitor_index: 1      # 1 = primary monitor
+
+model:
+  path: model/best.pt
+  confidence: 0.35
+  imgsz: 640            # smaller = faster; 416 / 640 / 960
+  device: "0"           # "0" = first GPU; "cpu" = CPU-only
+  # Optionally restrict to specific classes (leave empty to use all):
+  target_class_names: []
+  target_class_ids: []
+
+aim:
+  mode: upper_center    # center | upper_center (head area)
+  head_fraction: 0.18   # fraction of bbox height from top for upper_center
+  fov_radius: 200       # pixel radius -- targets outside are ignored
+  smoothing: 0.4        # lerp factor: 0.0 = no movement, 1.0 = instant snap
+  sensitivity: 1.0      # multiplier to match in-game mouse sensitivity
+
+hotkeys:
+  toggle: f2            # press once to enable, again to disable
+  exit: f10             # immediately stops the program
+  mode: toggle          # toggle | hold
