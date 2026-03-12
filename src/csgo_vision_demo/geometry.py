@@ -13,6 +13,13 @@ class DetectionGeometry:
     distance_to_center: float
 
 
+HEAD_KEYPOINT_PRIORITY = (
+    ("nose", (0,)),
+    ("eyes_midpoint", (1, 2)),
+    ("ears_midpoint", (3, 4)),
+)
+
+
 def compute_aim_point(
     bbox: Sequence[float],
     mode: str = "center",
@@ -28,8 +35,44 @@ def compute_aim_point(
         return center_x, center_y
     if mode == "upper_center":
         return center_x, y1 + (height * max(0.0, min(head_fraction, 1.0)))
+    if mode == "pose_head":
+        return center_x, y1 + (height * max(0.0, min(head_fraction, 1.0)))
 
     raise ValueError(f"Unsupported aim mode: {mode}")
+
+
+def extract_pose_head_point(
+    keypoints: Sequence[Sequence[float]] | None,
+    confidences: Sequence[float] | None = None,
+    min_confidence: float = 0.0,
+) -> tuple[tuple[float, float], str] | None:
+    if not keypoints:
+        return None
+
+    def get_point(index: int) -> tuple[float, float] | None:
+        if index >= len(keypoints):
+            return None
+        point = keypoints[index]
+        if len(point) < 2:
+            return None
+        x = float(point[0])
+        y = float(point[1])
+        if confidences is not None:
+            if index >= len(confidences) or float(confidences[index]) < min_confidence:
+                return None
+        if x <= 0.0 and y <= 0.0:
+            return None
+        return x, y
+
+    for source, indices in HEAD_KEYPOINT_PRIORITY:
+        points = [point for idx in indices if (point := get_point(idx)) is not None]
+        if len(points) != len(indices):
+            continue
+        mean_x = sum(point[0] for point in points) / len(points)
+        mean_y = sum(point[1] for point in points) / len(points)
+        return (mean_x, mean_y), source
+
+    return None
 
 
 def build_detection_geometry(
@@ -37,10 +80,14 @@ def build_detection_geometry(
     frame_size: Sequence[int],
     mode: str = "center",
     head_fraction: float = 0.18,
+    aim_point: Sequence[float] | None = None,
 ) -> DetectionGeometry:
     frame_width, frame_height = int(frame_size[0]), int(frame_size[1])
     screen_center = (frame_width / 2.0, frame_height / 2.0)
-    aim_x, aim_y = compute_aim_point(bbox, mode=mode, head_fraction=head_fraction)
+    if aim_point is None:
+        aim_x, aim_y = compute_aim_point(bbox, mode=mode, head_fraction=head_fraction)
+    else:
+        aim_x, aim_y = float(aim_point[0]), float(aim_point[1])
     offset_x = aim_x - screen_center[0]
     offset_y = aim_y - screen_center[1]
     distance = sqrt((offset_x * offset_x) + (offset_y * offset_y))

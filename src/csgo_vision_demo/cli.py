@@ -36,15 +36,15 @@ def _build_offline_parser(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument(
         "--aim-mode",
-        choices=["center", "upper_center"],
+        choices=["center", "upper_center", "pose_head"],
         default="center",
-        help="How to convert a bbox into a suggested aim point.",
+        help="How to convert detections into a suggested aim point.",
     )
     p.add_argument(
         "--head-fraction",
         type=float,
         default=0.18,
-        help="When aim-mode=upper_center, y is placed at bbox_top + height * head_fraction.",
+        help="When pose head keypoints are unavailable, fallback y is bbox_top + height * head_fraction.",
     )
     p.add_argument(
         "--list-classes",

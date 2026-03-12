@@ -35,7 +35,9 @@ class ModelSection:
 
 @dataclass
 class AimSection:
-    mode: str = "upper_center"    # "center" | "upper_center"
+    mode: str = "pose_head"       # "center" | "upper_center" | "pose_head"
+    target_strategy: str = "nearest_head_to_center"
+    min_keypoint_confidence: float = 0.35
     head_fraction: float = 0.18
     fov_radius: float = 200.0
     smoothing: float = 0.4
@@ -46,7 +48,28 @@ class AimSection:
 class HotkeySection:
     toggle: str = "f2"
     exit: str = "f10"
-    mode: str = "toggle"          # "toggle" | "hold"
+    mode: str = "hold"            # "toggle" | "hold"
+
+
+@dataclass
+class DebugSection:
+    enabled: bool = True
+    window_width: int = 360
+    window_height: int = 200
+    top_right_margin: int = 24
+    refresh_ms: int = 150
+    perf_log_interval_sec: float = 5.0
+    save_frames: bool = True
+    save_interval_sec: float = 5.0
+    output_dir: str = "outputs/realtime_debug"
+
+
+@dataclass
+class RuntimeSection:
+    log_interval_sec: float = 5.0
+    warmup_frames: int = 1
+    max_stale_frame_ms: float = 500.0
+    capture_sleep_ms: float = 1.0
 
 
 @dataclass
@@ -55,6 +78,8 @@ class RealtimeConfig:
     model: ModelSection = field(default_factory=ModelSection)
     aim: AimSection = field(default_factory=AimSection)
     hotkeys: HotkeySection = field(default_factory=HotkeySection)
+    debug: DebugSection = field(default_factory=DebugSection)
+    runtime: RuntimeSection = field(default_factory=RuntimeSection)
 
 
 # ------------------------------------------------------------------
@@ -96,6 +121,8 @@ def _build_config(data: dict) -> RealtimeConfig:
     model_raw = data.get("model", {}) or {}
     aim_raw = data.get("aim", {}) or {}
     hk_raw = data.get("hotkeys", {}) or {}
+    debug_raw = data.get("debug", {}) or {}
+    runtime_raw = data.get("runtime", {}) or {}
 
     capture = CaptureSection(
         method=cap_raw.get("method", "mss"),
@@ -114,7 +141,9 @@ def _build_config(data: dict) -> RealtimeConfig:
     )
 
     aim = AimSection(
-        mode=str(aim_raw.get("mode", "upper_center")),
+        mode=str(aim_raw.get("mode", "pose_head")),
+        target_strategy=str(aim_raw.get("target_strategy", "nearest_head_to_center")),
+        min_keypoint_confidence=float(aim_raw.get("min_keypoint_confidence", 0.35)),
         head_fraction=float(aim_raw.get("head_fraction", 0.18)),
         fov_radius=float(aim_raw.get("fov_radius", 200.0)),
         smoothing=float(aim_raw.get("smoothing", 0.4)),
@@ -124,7 +153,32 @@ def _build_config(data: dict) -> RealtimeConfig:
     hotkeys = HotkeySection(
         toggle=str(hk_raw.get("toggle", "f2")),
         exit=str(hk_raw.get("exit", "f10")),
-        mode=str(hk_raw.get("mode", "toggle")),
+        mode=str(hk_raw.get("mode", "hold")),
     )
 
-    return RealtimeConfig(capture=capture, model=model, aim=aim, hotkeys=hotkeys)
+    debug = DebugSection(
+        enabled=bool(debug_raw.get("enabled", True)),
+        window_width=int(debug_raw.get("window_width", 360)),
+        window_height=int(debug_raw.get("window_height", 200)),
+        top_right_margin=int(debug_raw.get("top_right_margin", 24)),
+        refresh_ms=int(debug_raw.get("refresh_ms", 150)),
+        perf_log_interval_sec=float(debug_raw.get("perf_log_interval_sec", 5.0)),
+        save_frames=bool(debug_raw.get("save_frames", True)),
+        save_interval_sec=float(debug_raw.get("save_interval_sec", 5.0)),
+        output_dir=str(debug_raw.get("output_dir", "outputs/realtime_debug")),
+    )
+    runtime = RuntimeSection(
+        log_interval_sec=float(runtime_raw.get("log_interval_sec", 5.0)),
+        warmup_frames=int(runtime_raw.get("warmup_frames", 1)),
+        max_stale_frame_ms=float(runtime_raw.get("max_stale_frame_ms", 500.0)),
+        capture_sleep_ms=float(runtime_raw.get("capture_sleep_ms", 1.0)),
+    )
+
+    return RealtimeConfig(
+        capture=capture,
+        model=model,
+        aim=aim,
+        hotkeys=hotkeys,
+        debug=debug,
+        runtime=runtime,
+    )

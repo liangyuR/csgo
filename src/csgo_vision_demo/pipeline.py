@@ -8,29 +8,10 @@ from typing import Any
 
 import cv2
 
-from .geometry import build_detection_geometry, select_primary_index
+from .detection_normalizer import DetectionRecord, extract_detection_records, list_model_classes
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".wmv"}
-
-
-@dataclass
-class DetectionRecord:
-    source_file: str
-    frame_index: int
-    class_id: int
-    class_name: str
-    confidence: float
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    aim_x: float
-    aim_y: float
-    offset_x: float
-    offset_y: float
-    distance_to_center: float
-    is_primary_target: bool
 
 
 @dataclass
@@ -78,19 +59,9 @@ class OfflineAimAnalyzer:
         return self._model
 
     def list_classes(self) -> dict[int, str]:
-        names = self.model.names
-        if isinstance(names, dict):
-            return {int(k): str(v) for k, v in names.items()}
-        return {idx: str(name) for idx, name in enumerate(names)}
-
-    def _class_allowed(self, class_id: int, class_name: str) -> bool:
-        has_filter = bool(self.target_class_names or self.target_class_ids)
-        if not has_filter:
-            return True
-        return class_id in self.target_class_ids or class_name in self.target_class_names
+        return list_model_classes(self.model)
 
     def analyze_frame(self, frame) -> tuple[list[DetectionRecord], int | None]:
-        height, width = frame.shape[:2]
         result = self.model.predict(
             source=frame,
             conf=self.confidence,
@@ -98,55 +69,17 @@ class OfflineAimAnalyzer:
             device=self.device,
             verbose=False,
         )[0]
-
-        names = self.list_classes()
-        detections: list[DetectionRecord] = []
-        geometries = []
-
-        if result.boxes is None:
-            return detections, None
-
-        xyxy = result.boxes.xyxy.cpu().tolist()
-        confs = result.boxes.conf.cpu().tolist()
-        classes = result.boxes.cls.cpu().tolist()
-
-        for bbox, conf, cls in zip(xyxy, confs, classes):
-            class_id = int(cls)
-            class_name = names.get(class_id, str(class_id))
-            if not self._class_allowed(class_id, class_name):
-                continue
-
-            geometry = build_detection_geometry(
-                bbox=bbox,
-                frame_size=(width, height),
-                mode=self.aim_mode,
-                head_fraction=self.head_fraction,
-            )
-            geometries.append(geometry)
-            detections.append(
-                DetectionRecord(
-                    source_file="",
-                    frame_index=0,
-                    class_id=class_id,
-                    class_name=class_name,
-                    confidence=float(conf),
-                    x1=float(bbox[0]),
-                    y1=float(bbox[1]),
-                    x2=float(bbox[2]),
-                    y2=float(bbox[3]),
-                    aim_x=float(geometry.aim_point[0]),
-                    aim_y=float(geometry.aim_point[1]),
-                    offset_x=float(geometry.offset[0]),
-                    offset_y=float(geometry.offset[1]),
-                    distance_to_center=float(geometry.distance_to_center),
-                    is_primary_target=False,
-                )
-            )
-
-        primary_index = select_primary_index(geometries)
-        if primary_index is not None:
-            detections[primary_index].is_primary_target = True
-        return detections, primary_index
+        return extract_detection_records(
+            result,
+            frame.shape[:2],
+            self.list_classes(),
+            target_class_names=self.target_class_names,
+            target_class_ids=self.target_class_ids,
+            aim_mode=self.aim_mode,
+            target_strategy="nearest_head_to_center",
+            min_keypoint_confidence=0.35,
+            head_fraction=self.head_fraction,
+        )
 
     def annotate_frame(self, frame, detections: list[DetectionRecord], primary_index: int | None):
         canvas = frame.copy()
@@ -184,7 +117,7 @@ class OfflineAimAnalyzer:
             )
             cv2.putText(
                 canvas,
-                f"dx={det.offset_x:.0f}, dy={det.offset_y:.0f}",
+                f"{det.aim_source} dx={det.offset_x:.0f}, dy={det.offset_y:.0f}",
                 (p1[0], min(height - 12, p2[1] + 18)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
