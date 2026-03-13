@@ -29,6 +29,13 @@ from typing import Callable, Optional
 
 
 VK_CODE_MAP = {
+    # Mouse buttons (useful for FPS side-buttons)
+    "lbutton": 0x01,    # left mouse button
+    "rbutton": 0x02,    # right mouse button
+    "mbutton": 0x04,    # middle mouse button
+    "xbutton1": 0x05,   # mouse side-button 1 (back)
+    "xbutton2": 0x06,   # mouse side-button 2 (forward)
+    # Keyboard
     "backspace": 0x08,
     "tab": 0x09,
     "enter": 0x0D,

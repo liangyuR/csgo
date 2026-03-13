@@ -21,9 +21,11 @@ aim:
   target_strategy: nearest_head_to_center
   min_keypoint_confidence: 0.35
   head_fraction: 0.18   # fallback when pose head keypoints are missing
-  fov_radius: 200       # pixel radius -- targets outside are ignored
-  smoothing: 0.4        # lerp factor: 0.0 = no movement, 1.0 = instant snap
+  fov_radius: 200       # pixel radius -- targets outside this circle are ignored
+  smoothing: 0.4        # lerp factor per tick (0 < smoothing <= 1.0)
   sensitivity: 1.0      # multiplier to match in-game mouse sensitivity
+  deadzone_pixels: 3    # no movement when aim point is within this many px of crosshair
+  max_speed: 30         # hard cap on per-tick mouse delta magnitude (pixels)
 
 hotkeys:
   toggle: f2            # hold to enable auto aim

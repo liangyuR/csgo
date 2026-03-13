@@ -42,6 +42,8 @@ class AimSection:
     fov_radius: float = 200.0
     smoothing: float = 0.4
     sensitivity: float = 1.0
+    deadzone_pixels: float = 3.0  # stop moving when crosshair is this close
+    max_speed: float = 30.0       # max mouse delta magnitude per tick (pixels)
 
 
 @dataclass
@@ -148,6 +150,8 @@ def _build_config(data: dict) -> RealtimeConfig:
         fov_radius=float(aim_raw.get("fov_radius", 200.0)),
         smoothing=float(aim_raw.get("smoothing", 0.4)),
         sensitivity=float(aim_raw.get("sensitivity", 1.0)),
+        deadzone_pixels=float(aim_raw.get("deadzone_pixels", 3.0)),
+        max_speed=float(aim_raw.get("max_speed", 30.0)),
     )
 
     hotkeys = HotkeySection(

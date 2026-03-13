@@ -1,3 +1,18 @@
+"""Geometry utilities for aim-point extraction and screen-offset calculation.
+
+Coordinate system convention (same as mss screen captures):
+  - Origin (0, 0) is the top-left corner of the captured region.
+  - x increases to the right, y increases downward.
+  - Screen center == (frame_width / 2, frame_height / 2).
+  - offset_x = aim_point_x - center_x  (positive → aim is right of crosshair)
+  - offset_y = aim_point_y - center_y  (positive → aim is below crosshair)
+
+Aim-point selection priority (pose_head mode):
+  1. Nose keypoint (index 0) — most reliable single-point head indicator.
+  2. Eyes midpoint (indices 1, 2) — fallback when nose is occluded.
+  3. Ears midpoint (indices 3, 4) — last resort before bbox fallback.
+  4. Bbox upper_center — used when no keypoint clears the confidence threshold.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -88,6 +103,13 @@ def build_detection_geometry(
         aim_x, aim_y = compute_aim_point(bbox, mode=mode, head_fraction=head_fraction)
     else:
         aim_x, aim_y = float(aim_point[0]), float(aim_point[1])
+
+    # Clamp aim point to frame bounds so out-of-frame YOLO keypoints (which
+    # can occasionally appear slightly outside the image) never produce a
+    # wildly large offset that slams the crosshair across the screen.
+    aim_x = max(0.0, min(float(frame_width), aim_x))
+    aim_y = max(0.0, min(float(frame_height), aim_y))
+
     offset_x = aim_x - screen_center[0]
     offset_y = aim_y - screen_center[1]
     distance = sqrt((offset_x * offset_x) + (offset_y * offset_y))

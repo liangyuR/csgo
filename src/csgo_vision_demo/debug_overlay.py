@@ -26,11 +26,23 @@ class RealtimeDebugState:
 
 
 def build_debug_lines(state: RealtimeDebugState) -> list[str]:
+    aim_str = "ON" if state.aim_active else "OFF"
+    # Derive a concise state label from the action_summary for prominent display.
+    action_lower = state.action_summary.lower()
+    if "locked" in action_lower:
+        state_label = "LOCKED"
+    elif "aiming" in action_lower:
+        state_label = "AIMING"
+    elif "disabled" in action_lower or aim_str == "OFF":
+        state_label = "IDLE"
+    else:
+        state_label = state.action_summary.upper()[:10]
+
     return [
         "Realtime Debug",
         f"Engine: {state.engine_status}",
         f"FPS: {state.fps:.1f}",
-        f"Aim: {'ON' if state.aim_active else 'OFF'}",
+        f"Aim: {aim_str}  [{state_label}]",
         f"Detections: {state.detections}",
         f"Infer: {state.inference_ms:.1f} ms",
         f"Target: {state.primary_summary}",
