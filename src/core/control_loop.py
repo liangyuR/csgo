@@ -277,49 +277,15 @@ def _reset_control_state(
         _clear_lock_state(state)
 
 
-def _build_candidates(
-    payload: DetectionPayload,
+def _candidate_for_box(
+    box: list[float] | tuple[float, float, float, float],
     crosshair_x: int,
     crosshair_y: int,
-) -> list[tuple[float, float, float, Box]]:
-    candidates: list[tuple[float, float, float, Box]] = []
-    for box in payload.boxes:
-        box_tuple = _box_to_tuple(box)
-        center_x, center_y = _box_center(box_tuple)
-        candidates.append(
-            (
-                _distance_sq(center_x, center_y, crosshair_x, crosshair_y),
-                center_x,
-                center_y,
-                box_tuple,
-            )
-        )
-
-    candidates.sort(key=lambda item: item[0])
-    return candidates
-
-
-def _match_locked_candidate(
-    candidates: list[tuple[float, float, float, Box]],
-    locked_box: Box,
-    lock_retain_radius_px: float,
-) -> tuple[float, float, float, Box] | None:
-    locked_cx, locked_cy = _box_center(locked_box)
-    best_candidate: tuple[float, float, float, Box] | None = None
-    best_sort_key: tuple[float, float, float] | None = None
-
-    for distance_sq, center_x, center_y, box in candidates:
-        iou = _box_iou(box, locked_box)
-        center_distance_sq = _distance_sq(center_x, center_y, locked_cx, locked_cy)
-        if iou < 0.2 and center_distance_sq > (lock_retain_radius_px ** 2):
-            continue
-
-        sort_key = (-iou, center_distance_sq, distance_sq)
-        if best_sort_key is None or sort_key < best_sort_key:
-            best_sort_key = sort_key
-            best_candidate = (distance_sq, center_x, center_y, box)
-
-    return best_candidate
+) -> tuple[float, float, float, Box]:
+    box_tuple = _box_to_tuple(box)
+    center_x, center_y = _box_center(box_tuple)
+    distance_sq = _distance_sq(center_x, center_y, crosshair_x, crosshair_y)
+    return distance_sq, center_x, center_y, box_tuple
 
 
 def _select_target(
@@ -330,7 +296,6 @@ def _select_target(
     state: ControlLoopState,
     current_time: float,
 ) -> tuple[Box | None, float | None, float | None, bool, bool]:
-    candidates = _build_candidates(payload, crosshair_x, crosshair_y)
     sticky_enabled = bool(getattr(config, "sticky_target_enabled", True))
     lock_retain_radius_px = float(getattr(config, "lock_retain_radius_px", 48.0))
     lock_retain_time_s = float(getattr(config, "lock_retain_time_s", 0.12))
@@ -338,14 +303,40 @@ def _select_target(
     previous_box = state.locked_box
     selected: tuple[float, float, float, Box] | None = None
     hold_lock = False
+    nearest_candidate: tuple[float, float, float, Box] | None = None
+    best_locked_sort_key: tuple[float, float, float] | None = None
+    locked_center_x = 0.0
+    locked_center_y = 0.0
+    lock_retain_radius_sq = lock_retain_radius_px ** 2
 
     if sticky_enabled and previous_box is not None:
-        selected = _match_locked_candidate(candidates, previous_box, lock_retain_radius_px)
-        if selected is None and (current_time - state.lock_last_seen_time) <= lock_retain_time_s:
-            hold_lock = True
+        locked_center_x, locked_center_y = _box_center(previous_box)
 
-    if selected is None and not hold_lock and candidates:
-        selected = candidates[0]
+    for box in payload.boxes:
+        candidate = _candidate_for_box(box, crosshair_x, crosshair_y)
+        distance_sq, center_x, center_y, box_tuple = candidate
+
+        if nearest_candidate is None or distance_sq < nearest_candidate[0]:
+            nearest_candidate = candidate
+
+        if not sticky_enabled or previous_box is None:
+            continue
+
+        iou = _box_iou(box_tuple, previous_box)
+        center_distance_sq = _distance_sq(center_x, center_y, locked_center_x, locked_center_y)
+        if iou < 0.2 and center_distance_sq > lock_retain_radius_sq:
+            continue
+
+        sort_key = (-iou, center_distance_sq, distance_sq)
+        if best_locked_sort_key is None or sort_key < best_locked_sort_key:
+            best_locked_sort_key = sort_key
+            selected = candidate
+
+    if selected is None and sticky_enabled and previous_box is not None:
+        hold_lock = (current_time - state.lock_last_seen_time) <= lock_retain_time_s
+
+    if selected is None and not hold_lock:
+        selected = nearest_candidate
 
     if selected is None:
         if not hold_lock:

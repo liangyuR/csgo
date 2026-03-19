@@ -53,6 +53,11 @@ class _FakeYOLO:
 
 
 class UltralyticsRuntimeTests(unittest.TestCase):
+    def assertFloatListAlmostEqual(self, actual, expected, places: int = 6) -> None:
+        self.assertEqual(len(actual), len(expected))
+        for actual_value, expected_value in zip(actual, expected):
+            self.assertAlmostEqual(actual_value, expected_value, places=places)
+
     def test_missing_dependency_raises_actionable_error(self) -> None:
         real_import_module = importlib.import_module
 
@@ -79,7 +84,7 @@ class UltralyticsRuntimeTests(unittest.TestCase):
 
         self.assertIsInstance(payload, DetectionPayload)
         self.assertEqual(payload.boxes, [[15.0, 27.0, 35.0, 47.0], [55.0, 67.0, 75.0, 87.0]])
-        self.assertEqual(payload.confidences, [0.9, 0.8])
+        self.assertFloatListAlmostEqual(payload.confidences, [0.9, 0.8])
         self.assertEqual(payload.class_ids, [1, 3])
         self.assertEqual(model._model.engine_path, "Model/test.engine")
         self.assertEqual(model._model.task, "detect")
@@ -87,6 +92,25 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         self.assertEqual(model._model.predict_calls[0]["imgsz"], 640)
         self.assertEqual(model._model.predict_calls[0]["conf"], 0.25)
         self.assertFalse(model._model.predict_calls[0]["verbose"])
+
+    def test_detect_can_filter_by_target_class_and_fov_before_materializing_lists(self) -> None:
+        fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
+
+        with mock.patch("core.ultralytics_runtime.importlib.import_module", return_value=fake_module):
+            model = UltralyticsEngineModel("Model/test.engine", input_size=640)
+
+        payload = model.detect(
+            np.zeros((32, 32, 3), dtype=np.uint8),
+            min_confidence=0.25,
+            offset_x=5,
+            offset_y=7,
+            target_class_id=3,
+            fov_bounds=(54, 66, 76, 88),
+        )
+
+        self.assertEqual(payload.boxes, [[55.0, 67.0, 75.0, 87.0]])
+        self.assertFloatListAlmostEqual(payload.confidences, [0.8])
+        self.assertEqual(payload.class_ids, [3])
 
 
 if __name__ == "__main__":

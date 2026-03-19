@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from typing import Any
 
-from .detection_state import DetectionPayload
-from ultralytics import YOLO
 import numpy as np
+
+from .detection_state import DetectionPayload
+
+
+EMPTY_DETECTION_PAYLOAD = DetectionPayload([], [], [])
+from ultralytics import YOLO
 
 class UltralyticsEngineModel:
     """Thin Ultralytics wrapper with a stable detect() interface."""
@@ -31,6 +34,8 @@ class UltralyticsEngineModel:
         min_confidence: float,
         offset_x: int = 0,
         offset_y: int = 0,
+        target_class_id: int | None = None,
+        fov_bounds: tuple[int, int, int, int] | None = None,
     ) -> DetectionPayload:
         results = self._model.predict(
             source=frame,
@@ -39,35 +44,66 @@ class UltralyticsEngineModel:
             verbose=False,
         )
         if not results:
-            return DetectionPayload([], [], [])
+            return EMPTY_DETECTION_PAYLOAD
 
         boxes = getattr(results[0], "boxes", None)
         if boxes is None:
-            return DetectionPayload([], [], [])
+            return EMPTY_DETECTION_PAYLOAD
 
         xyxy = self._to_numpy(getattr(boxes, "xyxy", None))
         confidences = self._to_numpy(getattr(boxes, "conf", None))
         class_ids = self._to_numpy(getattr(boxes, "cls", None))
         if xyxy is None or confidences is None or class_ids is None:
-            return DetectionPayload([], [], [])
+            return EMPTY_DETECTION_PAYLOAD
 
-        payload_boxes = [
-            [
-                float(box[0]) + offset_x,
-                float(box[1]) + offset_y,
-                float(box[2]) + offset_x,
-                float(box[3]) + offset_y,
-            ]
-            for box in xyxy.tolist()
-        ]
+        xyxy = np.asarray(xyxy, dtype=np.float32)
+        confidences = np.asarray(confidences, dtype=np.float32)
+        class_ids = np.asarray(class_ids, dtype=np.int32)
+        if xyxy.size == 0 or confidences.size == 0 or class_ids.size == 0:
+            return EMPTY_DETECTION_PAYLOAD
+
+        keep_mask = np.ones(len(xyxy), dtype=bool)
+        if target_class_id is not None:
+            keep_mask &= class_ids == int(target_class_id)
+
+        if fov_bounds is not None:
+            fov_left, fov_top, fov_right, fov_bottom = fov_bounds
+            keep_mask &= (
+                (xyxy[:, 0] + offset_x < fov_right)
+                & (xyxy[:, 2] + offset_x > fov_left)
+                & (xyxy[:, 1] + offset_y < fov_bottom)
+                & (xyxy[:, 3] + offset_y > fov_top)
+            )
+
+        if not np.any(keep_mask):
+            return EMPTY_DETECTION_PAYLOAD
+
+        filtered_boxes = xyxy[keep_mask]
+        filtered_confidences = confidences[keep_mask]
+        filtered_class_ids = class_ids[keep_mask]
+
+        filtered_boxes = filtered_boxes.copy()
+        filtered_boxes[:, [0, 2]] += float(offset_x)
+        filtered_boxes[:, [1, 3]] += float(offset_y)
+
         return DetectionPayload(
-            boxes=payload_boxes,
-            confidences=[float(value) for value in confidences.tolist()],
-            class_ids=[int(value) for value in class_ids.tolist()],
+            boxes=filtered_boxes.tolist(),
+            confidences=filtered_confidences.tolist(),
+            class_ids=filtered_class_ids.tolist(),
         )
 
     def _build_warmup_frame(self):
         return np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
+
+    @staticmethod
+    def _import_required_module(module_name: str):
+        try:
+            return importlib.import_module(module_name)
+        except ImportError as exc:
+            raise RuntimeError(
+                f"Ultralytics runtime dependency '{module_name}' failed to load. "
+                f"Original error: {exc.__class__.__name__}: {exc}"
+            ) from exc
 
     @staticmethod
     def _to_numpy(value: Any):

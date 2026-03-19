@@ -30,6 +30,7 @@ from core.control_loop import (
     ControlLoopState,
     _get_target_smoothing_alpha,
     _resolve_control_tick_interval,
+    _select_target,
     run_control_step,
 )
 from core.detection_state import DetectionFrame, DetectionPayload
@@ -199,6 +200,63 @@ class ControlLoopCompensationTests(unittest.TestCase):
         track_alpha = _get_target_smoothing_alpha(config, track_state, 140.0, 100.0, 100, 100, 1.02)
 
         self.assertGreater(acquire_alpha, track_alpha)
+
+    def test_select_target_prefers_nearest_candidate_without_sorting_side_effects(self) -> None:
+        config = self._make_config()
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [140.0, 90.0, 160.0, 110.0],
+                [105.0, 95.0, 125.0, 115.0],
+                [170.0, 90.0, 190.0, 110.0],
+            ],
+            confidences=[0.7, 0.8, 0.9],
+            class_ids=[0, 0, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (105.0, 95.0, 125.0, 115.0))
+        self.assertEqual((target_x, target_y), (115.0, 105.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
+    def test_select_target_prefers_locked_match_over_nearest_candidate(self) -> None:
+        config = self._make_config()
+        state = ControlLoopState(
+            target_locked=True,
+            locked_box=(150.0, 95.0, 170.0, 115.0),
+            lock_last_seen_time=0.99,
+        )
+        payload = DetectionPayload(
+            boxes=[
+                [104.0, 95.0, 124.0, 115.0],
+                [152.0, 96.0, 172.0, 116.0],
+            ],
+            confidences=[0.8, 0.85],
+            class_ids=[0, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (152.0, 96.0, 172.0, 116.0))
+        self.assertEqual((target_x, target_y), (162.0, 106.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
 
 
 if __name__ == "__main__":

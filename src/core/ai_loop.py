@@ -30,11 +30,14 @@ if TYPE_CHECKING:
             min_confidence: float,
             offset_x: int = 0,
             offset_y: int = 0,
+            target_class_id: int | None = None,
+            fov_bounds: tuple[int, int, int, int] | None = None,
         ) -> DetectionPayload: ...
 
 
 logger = logging.getLogger(__name__)
 WARMUP_ITERATIONS = 3
+EMPTY_DETECTION_PAYLOAD = empty_detection_payload()
 
 
 @dataclass
@@ -48,6 +51,7 @@ class DetectionLoopState:
     latency_ema_total_ms: float = 0.0
     latency_ema_fps: float = 0.0
     sequence: int = 0
+    target_class_id: int | None = None
 
 
 def _update_crosshair_position(config: Config, half_width: int, half_height: int) -> None:
@@ -62,7 +66,6 @@ def _update_crosshair_position(config: Config, half_width: int, half_height: int
 
 
 def _clear_queue_payloads(*queues: queue.Queue) -> None:
-    payload = empty_detection_payload()
     for target_queue in queues:
         if target_queue is None:
             continue
@@ -71,7 +74,7 @@ def _clear_queue_payloads(*queues: queue.Queue) -> None:
                 target_queue.get_nowait()
         except queue.Empty:
             pass
-        target_queue.put(payload)
+        target_queue.put(EMPTY_DETECTION_PAYLOAD)
 
 
 def _publish_detection_frame(
@@ -119,47 +122,18 @@ def _calculate_detection_region(config: Config, crosshair_x: int, crosshair_y: i
     }
 
 
-def _filter_by_fov(
-    payload: DetectionPayload,
+def _calculate_fov_bounds(
     crosshair_x: int,
     crosshair_y: int,
     fov_size: int,
-) -> DetectionPayload:
-    if not payload.boxes:
-        return empty_detection_payload()
-
+) -> tuple[int, int, int, int]:
     fov_half = fov_size // 2
-    fov_left = crosshair_x - fov_half
-    fov_top = crosshair_y - fov_half
-    fov_right = crosshair_x + fov_half
-    fov_bottom = crosshair_y + fov_half
-
-    kept_boxes: list[list[float]] = []
-    kept_confidences: list[float] = []
-    kept_class_ids: list[int] = []
-
-    for box, confidence, class_id in zip(payload.boxes, payload.confidences, payload.class_ids):
-        x1, y1, x2, y2 = box
-        if x1 < fov_right and x2 > fov_left and y1 < fov_bottom and y2 > fov_top:
-            kept_boxes.append(box)
-            kept_confidences.append(confidence)
-            kept_class_ids.append(class_id)
-
-    return DetectionPayload(kept_boxes, kept_confidences, kept_class_ids)
-
-
-def _filter_by_target_class(payload: DetectionPayload, target_class_id: int) -> DetectionPayload:
-    kept_boxes: list[list[float]] = []
-    kept_confidences: list[float] = []
-    kept_class_ids: list[int] = []
-
-    for box, confidence, class_id in zip(payload.boxes, payload.confidences, payload.class_ids):
-        if class_id == target_class_id:
-            kept_boxes.append(box)
-            kept_confidences.append(confidence)
-            kept_class_ids.append(class_id)
-
-    return DetectionPayload(kept_boxes, kept_confidences, kept_class_ids)
+    return (
+        crosshair_x - fov_half,
+        crosshair_y - fov_half,
+        crosshair_x + fov_half,
+        crosshair_y + fov_half,
+    )
 
 
 def _update_queues(
@@ -293,7 +267,7 @@ def ai_logic_loop(
                         crosshair_x,
                         crosshair_y,
                         False,
-                        empty_detection_payload(),
+                        EMPTY_DETECTION_PAYLOAD,
                         loop_start_perf,
                     )
                     time.sleep(0.05)
@@ -305,7 +279,7 @@ def ai_logic_loop(
                 config.capture_top = region["top"]
                 config.capture_width = region["width"]
                 config.capture_height = region["height"]
-                config.region = dict(region)
+                config.region = region
 
                 if region["width"] <= 0 or region["height"] <= 0:
                     continue
@@ -321,16 +295,20 @@ def ai_logic_loop(
                 capture_end_perf = time.perf_counter()
 
                 preprocess_end_perf = time.perf_counter()
+                if state.target_class_id is None or not 0 <= state.target_class_id < len(model_spec.labels):
+                    state.target_class_id = model_spec.label_to_class_id(config.active_target_class)
+                elif model_spec.class_id_to_label(state.target_class_id) != config.active_target_class:
+                    state.target_class_id = model_spec.label_to_class_id(config.active_target_class)
+
                 payload = model.detect(
                     game_frame,
                     min_confidence=config.min_confidence,
                     offset_x=region["left"],
                     offset_y=region["top"],
+                    target_class_id=state.target_class_id,
+                    fov_bounds=_calculate_fov_bounds(crosshair_x, crosshair_y, config.fov_size),
                 )
                 inference_end_perf = time.perf_counter()
-                payload = _filter_by_fov(payload, crosshair_x, crosshair_y, config.fov_size)
-                target_class_id = model_spec.label_to_class_id(config.active_target_class)
-                payload = _filter_by_target_class(payload, target_class_id)
                 postprocess_end_perf = time.perf_counter()
 
                 _update_queues(overlay_queue, auto_fire_boxes_queue, payload)
