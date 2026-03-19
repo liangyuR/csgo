@@ -84,14 +84,17 @@ class DXCamCaptureBackend(ScreenCaptureBackend):
 def create_capture_backend(preference: str = "auto") -> ScreenCaptureBackend:
     selected = str(preference or "auto").lower()
 
+    if selected == "mss":
+        backend = MSSCaptureBackend()
+        logger.info("Using screen capture backend: %s", backend.name)
+        return backend
+
     if selected in {"auto", "dxcam"}:
         try:
             backend = DXCamCaptureBackend()
             logger.info("Using screen capture backend: %s", backend.name)
             return backend
         except Exception as e:
-            logger.warning("dxcam unavailable, falling back to mss: %s", e)
+            raise RuntimeError(f"dxcam capture backend is unavailable: {e}") from e
 
-    backend = MSSCaptureBackend()
-    logger.info("Using screen capture backend: %s", backend.name)
-    return backend
+    raise RuntimeError(f"Unsupported capture backend: {selected}")

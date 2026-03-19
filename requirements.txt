@@ -1,5 +1,6 @@
 numpy
 dxcam; platform_system == "Windows"
+mss
 opencv-python
 ultralytics
 tensorrt
