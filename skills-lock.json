@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "python-performance-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "5a0b73f9cf738b980678fe98fbc9f9549320258fe097226de87b3afbf31f03fd"
+    }
+  }
+}

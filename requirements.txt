@@ -1,13 +1,12 @@
-# Core inference
-ultralytics>=8.2.0
-opencv-python>=4.9.0
-numpy>=1.26.0
-
-# Real-time screen capture
-mss>=9.0.0
-
-# Config file parsing
-pyyaml>=6.0.0
-
-# Global hotkey listener (requires admin on Windows for some games)
-keyboard>=0.13.5
+numpy
+dxcam; platform_system == "Windows"
+opencv-python
+ultralytics
+tensorrt
+PyQt6
+PyQt6-Fluent-Widgets
+PyQt6-Frameless-Window
+darkdetect
+pywin32
+pyserial
+vgamepad
