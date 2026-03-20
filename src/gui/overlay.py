@@ -98,9 +98,9 @@ class PyQtOverlay(QWidget):
             payload = None
 
         if payload is not None:
-            self.boxes = payload.boxes
-            self.confidences = payload.confidences
-            self.class_ids = payload.class_ids
+            self.boxes = payload.boxes.tolist()
+            self.confidences = payload.confidences.tolist()
+            self.class_ids = payload.class_ids.tolist()
 
         if self.config.AimToggle:
             self.update()
@@ -184,7 +184,7 @@ class PyQtOverlay(QWidget):
             painter.setPen(QPen(OverlayColors.get_fov_color(), 2))
             self.draw_fov_corners(painter, self.config.crosshairX, self.config.crosshairY, self.config.fov_size)
 
-        if getattr(self.config, "show_boxes", True) and self.boxes:
+        if getattr(self.config, "show_boxes", True) and len(self.boxes) > 0:
             labels = self._model_labels()
             pen_box = QPen(OverlayColors.get_box_color(), 2)
             pen_text = QPen(OverlayColors.get_confidence_text_color(), 1)

@@ -6,7 +6,6 @@ import logging
 import sys
 from typing import Dict
 
-import mss
 import numpy as np
 import numpy.typing as npt
 
@@ -34,23 +33,6 @@ class ScreenCaptureBackend:
         return
 
 
-class MSSCaptureBackend(ScreenCaptureBackend):
-    name = "mss"
-
-    def __init__(self) -> None:
-        self._capture = mss.mss()
-
-    def grab(self, region: CaptureRegion) -> npt.NDArray[np.uint8] | None:
-        screenshot = self._capture.grab(region)
-        frame = np.frombuffer(screenshot.bgra, dtype=np.uint8).reshape((screenshot.height, screenshot.width, 4))
-        return np.ascontiguousarray(frame[:, :, 2::-1])
-
-    def close(self) -> None:
-        close = getattr(self._capture, "close", None)
-        if callable(close):
-            close()
-
-
 class DXCamCaptureBackend(ScreenCaptureBackend):
     name = "dxcam"
 
@@ -70,7 +52,11 @@ class DXCamCaptureBackend(ScreenCaptureBackend):
         frame = self._camera.grab(region=(left, top, right, bottom))
         if frame is None:
             return None
-        return np.ascontiguousarray(frame)
+        if frame.dtype != np.uint8:
+            frame = frame.astype(np.uint8, copy=False)
+        if not frame.flags.c_contiguous:
+            return np.ascontiguousarray(frame)
+        return frame
 
     def close(self) -> None:
         stop = getattr(self._camera, "stop", None)
@@ -83,11 +69,6 @@ class DXCamCaptureBackend(ScreenCaptureBackend):
 
 def create_capture_backend(preference: str = "auto") -> ScreenCaptureBackend:
     selected = str(preference or "auto").lower()
-
-    if selected == "mss":
-        backend = MSSCaptureBackend()
-        logger.info("Using screen capture backend: %s", backend.name)
-        return backend
 
     if selected in {"auto", "dxcam"}:
         try:

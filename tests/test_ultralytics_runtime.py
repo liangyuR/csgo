@@ -83,9 +83,14 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         payload = model.detect(np.zeros((32, 32, 3), dtype=np.uint8), min_confidence=0.25, offset_x=5, offset_y=7)
 
         self.assertIsInstance(payload, DetectionPayload)
-        self.assertEqual(payload.boxes, [[15.0, 27.0, 35.0, 47.0], [55.0, 67.0, 75.0, 87.0]])
-        self.assertFloatListAlmostEqual(payload.confidences, [0.9, 0.8])
-        self.assertEqual(payload.class_ids, [1, 3])
+        np.testing.assert_allclose(
+            payload.boxes,
+            np.array([[15.0, 27.0, 35.0, 47.0], [55.0, 67.0, 75.0, 87.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
+        self.assertFloatListAlmostEqual(payload.confidences.tolist(), [0.9, 0.8])
+        self.assertEqual(payload.class_ids.tolist(), [1, 3])
         self.assertEqual(model._model.engine_path, "Model/test.engine")
         self.assertEqual(model._model.task, "detect")
         self.assertEqual(len(model._model.predict_calls), 1)
@@ -108,9 +113,14 @@ class UltralyticsRuntimeTests(unittest.TestCase):
             fov_bounds=(54, 66, 76, 88),
         )
 
-        self.assertEqual(payload.boxes, [[55.0, 67.0, 75.0, 87.0]])
-        self.assertFloatListAlmostEqual(payload.confidences, [0.8])
-        self.assertEqual(payload.class_ids, [3])
+        np.testing.assert_allclose(
+            payload.boxes,
+            np.array([[55.0, 67.0, 75.0, 87.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
+        self.assertFloatListAlmostEqual(payload.confidences.tolist(), [0.8])
+        self.assertEqual(payload.class_ids.tolist(), [3])
 
 
 if __name__ == "__main__":

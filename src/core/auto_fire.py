@@ -57,7 +57,11 @@ def auto_fire_loop(config: Config, boxes_queue: queue.Queue) -> None:
                             except Exception as e:
                                 logger.warning("AutoFire queue read failed: %s", e)
 
-                        if cached_payload and getattr(cached_payload, "boxes", None):
+                        if (
+                            cached_payload is not None
+                            and getattr(cached_payload, "boxes", None) is not None
+                            and getattr(cached_payload.boxes, "shape", (0,))[0] > 0
+                        ):
                             crosshair_x, crosshair_y = config.crosshairX, config.crosshairY
                             for box in cached_payload.boxes:
                                 x1, y1, x2, y2 = box

@@ -7,11 +7,10 @@ from typing import Any
 
 import numpy as np
 
-from .detection_state import DetectionPayload
+from .detection_state import DetectionPayload, empty_detection_payload
 
 
-EMPTY_DETECTION_PAYLOAD = DetectionPayload([], [], [])
-from ultralytics import YOLO
+EMPTY_DETECTION_PAYLOAD = empty_detection_payload()
 
 class UltralyticsEngineModel:
     """Thin Ultralytics wrapper with a stable detect() interface."""
@@ -21,7 +20,8 @@ class UltralyticsEngineModel:
     def __init__(self, engine_path: str, input_size: int) -> None:
         self.engine_path = engine_path
         self.input_size = int(input_size)
-        self._model = YOLO(engine_path, task="detect")
+        ultralytics_module = self._import_required_module("ultralytics")
+        self._model = ultralytics_module.YOLO(engine_path, task="detect")
 
     def warmup(self, iterations: int = 3) -> None:
         warmup_frame = self._build_warmup_frame()
@@ -82,14 +82,15 @@ class UltralyticsEngineModel:
         filtered_confidences = confidences[keep_mask]
         filtered_class_ids = class_ids[keep_mask]
 
-        filtered_boxes = filtered_boxes.copy()
-        filtered_boxes[:, [0, 2]] += float(offset_x)
-        filtered_boxes[:, [1, 3]] += float(offset_y)
+        if offset_x != 0 or offset_y != 0:
+            filtered_boxes = filtered_boxes.copy()
+            filtered_boxes[:, [0, 2]] += float(offset_x)
+            filtered_boxes[:, [1, 3]] += float(offset_y)
 
         return DetectionPayload(
-            boxes=filtered_boxes.tolist(),
-            confidences=filtered_confidences.tolist(),
-            class_ids=filtered_class_ids.tolist(),
+            boxes=filtered_boxes,
+            confidences=filtered_confidences,
+            class_ids=filtered_class_ids,
         )
 
     def _build_warmup_frame(self):

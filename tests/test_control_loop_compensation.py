@@ -50,12 +50,14 @@ class ControlLoopCompensationTests(unittest.TestCase):
             "lock_retain_radius_px": 48.0,
             "lock_retain_time_s": 0.12,
             "target_point_smoothing_alpha": 1.0,
-            "tracker_enabled": False,
+            "tracker_enabled": True,
             "tracker_show_prediction": True,
-            "prediction_lead_time_s": 0.025,
-            "velocity_ema_alpha": 0.35,
+            "prediction_lead_time_s": 0.018,
+            "velocity_ema_alpha": 0.45,
             "velocity_deadzone_px_per_s": 10.0,
-            "prediction_max_distance_px": 32.0,
+            "screen_motion_compensation_enabled": True,
+            "screen_motion_compensation_ratio": 1.0,
+            "prediction_max_distance_px": 20.0,
             "aim_position_deadzone_px": 0.0,
             "bezier_curve_enabled": False,
             "bezier_curve_strength": 0.35,
@@ -66,8 +68,8 @@ class ControlLoopCompensationTests(unittest.TestCase):
             "tracker_has_prediction": False,
             "mouse_move_method": "mouse_event",
             "detect_interval": 0.02,
-            "control_stale_hold_ms": 40.0,
-            "control_stale_decay_ms": 60.0,
+            "control_stale_hold_ms": 12.0,
+            "control_stale_decay_ms": 24.0,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -257,6 +259,113 @@ class ControlLoopCompensationTests(unittest.TestCase):
         self.assertEqual((target_x, target_y), (162.0, 106.0))
         self.assertFalse(target_changed)
         self.assertFalse(hold_lock)
+
+    def test_self_motion_is_removed_from_tracker_velocity(self) -> None:
+        config = self._make_config(aim_position_deadzone_px=0.0)
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+
+        first = self._make_frame(
+            1,
+            100,
+            100,
+            DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+        )
+        second = self._make_frame(
+            2,
+            112,
+            100,
+            DetectionPayload(boxes=[[98.0, 90.0, 118.0, 110.0]], confidences=[0.9], class_ids=[0]),
+        )
+
+        run_control_step(config, state, pid_x, pid_y, first, 1.0, 1.0, 0.02)
+        run_control_step(config, state, pid_x, pid_y, second, 1.02, 1.02, 0.02)
+
+        self.assertIsNotNone(state.smart_tracker)
+        self.assertAlmostEqual(state.smart_tracker.vx, 0.0, places=5)
+        self.assertAlmostEqual(config.tracker_predicted_x, state.measured_target_x, places=5)
+
+    def test_tracker_applies_prediction_for_moving_target(self) -> None:
+        config = self._make_config(
+            aim_position_deadzone_px=0.0,
+            velocity_deadzone_px_per_s=0.0,
+            prediction_lead_time_s=0.02,
+        )
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+        frames = [
+            self._make_frame(
+                1,
+                100,
+                100,
+                DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                2,
+                100,
+                100,
+                DetectionPayload(boxes=[[114.0, 90.0, 134.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                3,
+                100,
+                100,
+                DetectionPayload(boxes=[[118.0, 90.0, 138.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+        ]
+
+        run_control_step(config, state, pid_x, pid_y, frames[0], 1.0, 1.0, 0.02)
+        run_control_step(config, state, pid_x, pid_y, frames[1], 1.02, 1.02, 0.02)
+        run_control_step(config, state, pid_x, pid_y, frames[2], 1.04, 1.04, 0.02)
+
+        self.assertTrue(state.tracker_active)
+        self.assertGreater(config.tracker_predicted_x, state.measured_target_x)
+
+    def test_combined_self_motion_and_target_motion_keeps_relative_velocity(self) -> None:
+        config = self._make_config(
+            aim_position_deadzone_px=0.0,
+            velocity_deadzone_px_per_s=0.0,
+        )
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+
+        run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            self._make_frame(
+                1,
+                100,
+                100,
+                DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            1.0,
+            1.0,
+            0.02,
+        )
+        run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            self._make_frame(
+                2,
+                106,
+                100,
+                DetectionPayload(boxes=[[108.0, 90.0, 128.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            1.02,
+            1.02,
+            0.02,
+        )
+
+        self.assertIsNotNone(state.smart_tracker)
+        self.assertGreater(state.smart_tracker.vx, 0.0)
+        self.assertLess(state.smart_tracker.vx, 300.0)
 
 
 if __name__ == "__main__":

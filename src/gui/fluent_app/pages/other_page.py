@@ -44,6 +44,15 @@ class OtherPage(BasePage):
             "",
             parent=self.programGroup
         )
+        self.refreshRuntimeBtn = PushButton("Refresh Runtime Settings")
+        self.refreshRuntimeCard = SettingCard(
+            FluentIcon.SYNC,
+            "Refresh Runtime Settings",
+            "Apply current UI values to running loops",
+            self.programGroup
+        )
+        self.refreshRuntimeCard.hBoxLayout.addWidget(self.refreshRuntimeBtn, 0, Qt.AlignmentFlag.AlignRight)
+        self.refreshRuntimeCard.hBoxLayout.addSpacing(16)
 
         # 離開並儲存
         self.exitSaveBtn = PrimaryPushButton(t("exit_and_save"))
@@ -82,6 +91,7 @@ class OtherPage(BasePage):
         """排版所有控制項"""
         # 程式控制
         self.programGroup.addSettingCard(self.showConsoleCard)
+        self.programGroup.addSettingCard(self.refreshRuntimeCard)
         self.programGroup.addSettingCard(self.exitSaveCard)
         self.addContent(self.programGroup)
 
@@ -113,6 +123,7 @@ class OtherPage(BasePage):
         """連接信號"""
         # 程式控制
         self.showConsoleCard.checkedChanged.connect(self._onShowConsoleChanged)
+        self.refreshRuntimeBtn.clicked.connect(self._onRefreshRuntimeSettings)
         self.exitSaveBtn.clicked.connect(self._onExitSave)
 
         # 社群按鈕
@@ -152,6 +163,11 @@ class OtherPage(BasePage):
             # 關閉視窗
             window.close()
     
+    def _onRefreshRuntimeSettings(self):
+        window = self.window()
+        if window and hasattr(window, "refreshRuntimeSettings"):
+            window.refreshRuntimeSettings()
+
     def retranslateUi(self):
         """刷新翻譯"""
         super().retranslateUi()
@@ -161,6 +177,9 @@ class OtherPage(BasePage):
 
         # 程式控制
         self.showConsoleCard.titleLabel.setText(t("show_console"))
+        self.refreshRuntimeCard.titleLabel.setText("Refresh Runtime Settings")
+        self.refreshRuntimeCard.contentLabel.setText("Apply current UI values to running loops")
+        self.refreshRuntimeBtn.setText("Refresh Runtime Settings")
         self.exitSaveCard.titleLabel.setText(t("exit_and_save"))
         self.exitSaveBtn.setText(t("exit_and_save"))
 
