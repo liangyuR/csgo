@@ -12,6 +12,8 @@ from .detection_state import DetectionPayload, empty_detection_payload
 
 EMPTY_DETECTION_PAYLOAD = empty_detection_payload()
 
+from ultralytics import YOLO
+
 class UltralyticsEngineModel:
     """Thin Ultralytics wrapper with a stable detect() interface."""
 
@@ -20,8 +22,7 @@ class UltralyticsEngineModel:
     def __init__(self, engine_path: str, input_size: int) -> None:
         self.engine_path = engine_path
         self.input_size = int(input_size)
-        ultralytics_module = self._import_required_module("ultralytics")
-        self._model = ultralytics_module.YOLO(engine_path, task="detect")
+        self._model = YOLO(engine_path, task="detect")
 
     def warmup(self, iterations: int = 3) -> None:
         warmup_frame = self._build_warmup_frame()
