@@ -16,7 +16,7 @@ LEGACY_CONFIG_KEYS = {
     "tracker_stop_threshold",
     "dml_cpu_fallback",
 }
-VALID_CAPTURE_BACKENDS = {"auto", "dxcam", "mss"}
+VALID_CAPTURE_BACKENDS = {"auto", "dxcam"}
 
 
 def _get_screen_size() -> tuple[int, int]:
@@ -111,10 +111,12 @@ class Config:
         self.bezier_curve_strength: float = 0.35
         self.bezier_curve_steps: int = 4
 
-        self.tracker_enabled: bool = False
-        self.prediction_lead_time_s: float = 0.01
-        self.velocity_ema_alpha: float = 0.7
+        self.tracker_enabled: bool = True
+        self.prediction_lead_time_s: float = 0.018
+        self.velocity_ema_alpha: float = 0.45
         self.velocity_deadzone_px_per_s: float = 10.0
+        self.screen_motion_compensation_enabled: bool = True
+        self.screen_motion_compensation_ratio: float = 1.0
         self.tracker_show_prediction: bool = True
         self.tracker_predicted_x: float = 0.0
         self.tracker_predicted_y: float = 0.0
@@ -127,7 +129,7 @@ class Config:
         self.lock_retain_radius_px: float = 48.0
         self.lock_retain_time_s: float = 0.12
         self.target_point_smoothing_alpha: float = 0.35
-        self.prediction_max_distance_px: float = 32.0
+        self.prediction_max_distance_px: float = 20.0
 
         self.disclaimer_agreed: bool = False
         self.first_run_complete: bool = False
@@ -167,8 +169,8 @@ class Config:
         self.always_aim: bool = False
         self.fov_follow_mouse: bool = True
         self.control_loop_hz: float = 500.0
-        self.control_stale_hold_ms: float = 40.0
-        self.control_stale_decay_ms: float = 60.0
+        self.control_stale_hold_ms: float = 12.0
+        self.control_stale_decay_ms: float = 24.0
 
         self.show_fov: bool = True
         self.show_boxes: bool = True
@@ -190,6 +192,7 @@ class Config:
 
         self.last_detection_time: float = 0.0
         self.last_overlay_update_time: float = 0.0
+        self.runtime_refresh_token: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -257,6 +260,8 @@ class Config:
             "prediction_lead_time_s": self.prediction_lead_time_s,
             "velocity_ema_alpha": self.velocity_ema_alpha,
             "velocity_deadzone_px_per_s": self.velocity_deadzone_px_per_s,
+            "screen_motion_compensation_enabled": self.screen_motion_compensation_enabled,
+            "screen_motion_compensation_ratio": self.screen_motion_compensation_ratio,
             "tracker_show_prediction": self.tracker_show_prediction,
             "dark_mode": self.dark_mode,
             "enable_acrylic": self.enable_acrylic,
@@ -359,9 +364,16 @@ def _validate_mouse_method(config: Config) -> None:
 
 def _validate_capture_backend(config: Config) -> None:
     capture_backend = str(getattr(config, "capture_backend", "auto") or "auto").lower()
+    if capture_backend == "mss":
+        capture_backend = "dxcam"
     if capture_backend not in VALID_CAPTURE_BACKENDS:
         capture_backend = "auto"
     config.capture_backend = capture_backend
+
+
+def bump_runtime_refresh_token(config: Config) -> int:
+    config.runtime_refresh_token = int(getattr(config, "runtime_refresh_token", 0) or 0) + 1
+    return config.runtime_refresh_token
 
 
 def _resolve_model_spec(config: Config) -> ModelSpec:
@@ -420,13 +432,19 @@ def _validate_stability_settings(config: Config) -> None:
     config.lock_retain_radius_px = _clamp(float(getattr(config, "lock_retain_radius_px", 48.0)), 8.0, float(config.width))
     config.lock_retain_time_s = _clamp(float(getattr(config, "lock_retain_time_s", 0.12)), 0.0, 1.0)
     config.target_point_smoothing_alpha = _clamp(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0, 1.0)
-    config.prediction_lead_time_s = _clamp(float(getattr(config, "prediction_lead_time_s", 0.025)), 0.0, 0.1)
-    config.velocity_ema_alpha = _clamp(float(getattr(config, "velocity_ema_alpha", 0.35)), 0.0, 1.0)
+    config.screen_motion_compensation_enabled = bool(getattr(config, "screen_motion_compensation_enabled", True))
+    config.prediction_lead_time_s = _clamp(float(getattr(config, "prediction_lead_time_s", 0.018)), 0.0, 0.1)
+    config.velocity_ema_alpha = _clamp(float(getattr(config, "velocity_ema_alpha", 0.45)), 0.0, 1.0)
     config.velocity_deadzone_px_per_s = _clamp(float(getattr(config, "velocity_deadzone_px_per_s", 10.0)), 0.0, 500.0)
-    config.prediction_max_distance_px = _clamp(float(getattr(config, "prediction_max_distance_px", 32.0)), 0.0, 200.0)
+    config.screen_motion_compensation_ratio = _clamp(
+        float(getattr(config, "screen_motion_compensation_ratio", 1.0)),
+        0.0,
+        1.5,
+    )
+    config.prediction_max_distance_px = _clamp(float(getattr(config, "prediction_max_distance_px", 20.0)), 0.0, 200.0)
     config.control_loop_hz = _clamp(float(getattr(config, "control_loop_hz", 500.0)), 30.0, 1000.0)
-    config.control_stale_hold_ms = _clamp(float(getattr(config, "control_stale_hold_ms", 40.0)), 0.0, 250.0)
-    config.control_stale_decay_ms = _clamp(float(getattr(config, "control_stale_decay_ms", 60.0)), 0.0, 500.0)
+    config.control_stale_hold_ms = _clamp(float(getattr(config, "control_stale_hold_ms", 12.0)), 0.0, 250.0)
+    config.control_stale_decay_ms = _clamp(float(getattr(config, "control_stale_decay_ms", 24.0)), 0.0, 500.0)
 
 
 def _migrate_model_settings(config: Config) -> None:

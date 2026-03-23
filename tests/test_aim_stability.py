@@ -50,7 +50,7 @@ fake_mss.mss = lambda: None
 sys.modules.setdefault("mss", fake_mss)
 
 from core.ai_loop import _calculate_detection_region
-from core.config import apply_model_constraints, migrate_config_data
+from core.config import apply_model_constraints, bump_runtime_refresh_token, migrate_config_data
 from core.control_loop import ControlLoopState, _select_target, run_control_step
 from core.detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
 from core.inference import PIDController, preprocess_image
@@ -68,12 +68,14 @@ class AimStabilityTests(unittest.TestCase):
             "lock_retain_radius_px": 48.0,
             "lock_retain_time_s": 0.12,
             "target_point_smoothing_alpha": 1.0,
-            "tracker_enabled": False,
+            "tracker_enabled": True,
             "tracker_show_prediction": True,
-            "prediction_lead_time_s": 0.025,
-            "velocity_ema_alpha": 0.35,
+            "prediction_lead_time_s": 0.018,
+            "velocity_ema_alpha": 0.45,
             "velocity_deadzone_px_per_s": 10.0,
-            "prediction_max_distance_px": 32.0,
+            "screen_motion_compensation_enabled": True,
+            "screen_motion_compensation_ratio": 1.0,
+            "prediction_max_distance_px": 20.0,
             "aim_position_deadzone_px": 3.0,
             "bezier_curve_enabled": False,
             "bezier_curve_strength": 0.35,
@@ -84,8 +86,8 @@ class AimStabilityTests(unittest.TestCase):
             "tracker_has_prediction": False,
             "mouse_move_method": "mouse_event",
             "detect_interval": 0.02,
-            "control_stale_hold_ms": 40.0,
-            "control_stale_decay_ms": 60.0,
+            "control_stale_hold_ms": 12.0,
+            "control_stale_decay_ms": 24.0,
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -144,6 +146,35 @@ class AimStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(migrated["pid_kd_x"], 0.005)
         self.assertEqual(migrated["controller_version"], 2)
 
+    def test_apply_model_constraints_preserves_dynamic_tracking_defaults(self) -> None:
+        from core.config import Config
+
+        config = Config()
+
+        self.assertTrue(config.tracker_enabled)
+        self.assertTrue(config.screen_motion_compensation_enabled)
+        self.assertAlmostEqual(config.screen_motion_compensation_ratio, 1.0)
+        self.assertAlmostEqual(config.prediction_lead_time_s, 0.018)
+        self.assertAlmostEqual(config.velocity_ema_alpha, 0.45)
+        self.assertAlmostEqual(config.prediction_max_distance_px, 20.0)
+        self.assertAlmostEqual(config.control_stale_hold_ms, 12.0)
+        self.assertAlmostEqual(config.control_stale_decay_ms, 24.0)
+
+    def test_runtime_refresh_token_helper_increments_monotonically(self) -> None:
+        config = SimpleNamespace(runtime_refresh_token=0)
+
+        self.assertEqual(bump_runtime_refresh_token(config), 1)
+        self.assertEqual(bump_runtime_refresh_token(config), 2)
+
+    def test_capture_backend_migration_maps_mss_to_dxcam(self) -> None:
+        migrated = migrate_config_data({"capture_backend": "mss"})
+
+        config = SimpleNamespace(capture_backend=migrated["capture_backend"])
+        from core.config import _validate_capture_backend
+
+        _validate_capture_backend(config)
+        self.assertEqual(config.capture_backend, "dxcam")
+
     def test_latest_detection_state_only_exposes_newest_frame(self) -> None:
         state = LatestDetectionState()
         first = self._make_frame(1, 100, 100, True, DetectionPayload([], [], []))
@@ -156,6 +187,14 @@ class AimStabilityTests(unittest.TestCase):
         self.assertIs(snapshot, second)
         self.assertEqual(snapshot.sequence, 2)
         self.assertEqual(snapshot.crosshair_x, 200)
+
+    def test_detection_payload_normalizes_inputs_to_read_only_arrays(self) -> None:
+        payload = DetectionPayload([[1, 2, 3, 4]], [0.5], [1])
+
+        self.assertEqual(payload.boxes.shape, (1, 4))
+        self.assertEqual(payload.confidences.dtype, np.float32)
+        self.assertEqual(payload.class_ids.dtype, np.int32)
+        self.assertFalse(payload.boxes.flags.writeable)
 
     def test_sticky_lock_prefers_existing_target_over_nearer_switch(self) -> None:
         config = self._make_config()
@@ -282,9 +321,9 @@ class AimStabilityTests(unittest.TestCase):
         frame = self._make_frame(1, 100, 100, True, payload)
 
         fresh = run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
-        hold = run_control_step(config, state, pid_x, pid_y, frame, 1.03, 1.03, 0.03)
-        decay = run_control_step(config, state, pid_x, pid_y, frame, 1.08, 1.08, 0.05)
-        idle = run_control_step(config, state, pid_x, pid_y, frame, 1.12, 1.12, 0.04)
+        hold = run_control_step(config, state, pid_x, pid_y, frame, 1.01, 1.01, 0.01)
+        decay = run_control_step(config, state, pid_x, pid_y, frame, 1.02, 1.02, 0.01)
+        idle = run_control_step(config, state, pid_x, pid_y, frame, 1.04, 1.04, 0.02)
 
         self.assertEqual(fresh.phase, "fresh")
         self.assertEqual(hold.phase, "hold")
@@ -308,7 +347,7 @@ class AimStabilityTests(unittest.TestCase):
         miss_frame = self._make_frame(2, 100, 100, True, miss_payload)
 
         run_control_step(config, state, pid_x, pid_y, fresh_frame, 1.0, 1.0, 0.02)
-        miss = run_control_step(config, state, pid_x, pid_y, miss_frame, 1.03, 1.03, 0.03)
+        miss = run_control_step(config, state, pid_x, pid_y, miss_frame, 1.01, 1.01, 0.01)
 
         self.assertEqual(miss.phase, "hold")
         self.assertTrue(state.target_locked)
@@ -408,15 +447,24 @@ class AimStabilityTests(unittest.TestCase):
     def test_tracker_resets_on_reverse_and_clamps_prediction_distance(self) -> None:
         tracker = SmartTracker(velocity_ema_alpha=0.35, velocity_deadzone_px_per_s=0.0)
         tracker.update(0.0, 0.0, 0.1, 96.0)
-        tracker.update(10.0, 0.0, 0.1, 96.0)
+        tracker.update(10.0, 0.0, 0.1, 96.0, motion_dx=10.0, motion_dy=0.0)
         forward_prediction = tracker.get_predicted_position(0.1, 32.0)
 
-        tracker.update(5.0, 0.0, 0.1, 96.0)
+        tracker.update(5.0, 0.0, 0.1, 96.0, motion_dx=-5.0, motion_dy=0.0)
         reverse_prediction = tracker.get_predicted_position(1.0, 3.0)
 
         self.assertGreater(forward_prediction[0], 10.0)
         self.assertLess(tracker.vx, 0.0)
         self.assertAlmostEqual(reverse_prediction[0], 2.0, places=5)
+
+    def test_tracker_uses_relative_motion_override(self) -> None:
+        tracker = SmartTracker(velocity_ema_alpha=1.0, velocity_deadzone_px_per_s=0.0)
+        tracker.update(120.0, 100.0, 0.1, 96.0)
+        tracker.update(110.0, 100.0, 0.1, 96.0, motion_dx=0.0, motion_dy=0.0)
+        predicted_x, predicted_y = tracker.get_predicted_position(0.05, 20.0)
+
+        self.assertEqual((predicted_x, predicted_y), (110.0, 100.0))
+        self.assertEqual((tracker.vx, tracker.vy), (0.0, 0.0))
 
 
 if __name__ == "__main__":

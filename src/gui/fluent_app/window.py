@@ -280,6 +280,15 @@ class AxiomWindow(FluentWindow):
         if self._config:
             self.setConfig(self._config)
         
+    def refreshRuntimeSettings(self):
+        """Apply the current config object to running worker threads."""
+        if self._config is None:
+            return 0
+
+        from core.config import bump_runtime_refresh_token
+
+        return bump_runtime_refresh_token(self._config)
+
     def initNavigation(self):
         # Navigation items using translation keys
 

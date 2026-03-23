@@ -121,10 +121,14 @@ def postprocess_outputs(
     min_confidence: float,
     offset_x: int = 0,
     offset_y: int = 0,
-) -> Tuple[List[List[float]], List[float], List[int]]:
+) -> Tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.int32]]:
     predictions = outputs[0][0].T
     if predictions.size == 0:
-        return [], [], []
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int32),
+        )
 
     if predictions.shape[1] > 5:
         class_scores = predictions[:, 4:]
@@ -140,7 +144,11 @@ def postprocess_outputs(
     filtered_class_ids = class_ids[conf_mask]
 
     if len(filtered_predictions) == 0:
-        return [], [], []
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int32),
+        )
 
     scale_x = original_width / model_input_size
     scale_y = original_height / model_input_size
@@ -155,18 +163,22 @@ def postprocess_outputs(
     x2 = (cx + w / 2) * scale_x + offset_x
     y2 = (cy + h / 2) * scale_y + offset_y
 
-    boxes = np.stack([x1, y1, x2, y2], axis=1).tolist()
-    return boxes, filtered_confidences.tolist(), filtered_class_ids.astype(int).tolist()
+    boxes = np.stack([x1, y1, x2, y2], axis=1).astype(np.float32, copy=False)
+    return boxes, filtered_confidences.astype(np.float32, copy=False), filtered_class_ids.astype(np.int32, copy=False)
 
 
 def non_max_suppression(
-    boxes: List[List[float]],
-    confidences: List[float],
-    class_ids: List[int],
+    boxes: npt.ArrayLike,
+    confidences: npt.ArrayLike,
+    class_ids: npt.ArrayLike,
     iou_threshold: float = 0.4,
-) -> Tuple[List[List[float]], List[float], List[int]]:
-    if not boxes:
-        return [], [], []
+) -> Tuple[npt.NDArray[np.float32], npt.NDArray[np.float32], npt.NDArray[np.int32]]:
+    if len(boxes) == 0:
+        return (
+            np.empty((0, 4), dtype=np.float32),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0,), dtype=np.int32),
+        )
 
     boxes_arr = np.array(boxes, dtype=np.float32)
     confidences_arr = np.array(confidences, dtype=np.float32)
@@ -201,7 +213,7 @@ def non_max_suppression(
 
     kept_indices.sort(key=lambda idx: confidences[idx], reverse=True)
     return (
-        boxes_arr[kept_indices].tolist(),
-        confidences_arr[kept_indices].tolist(),
-        class_ids_arr[kept_indices].astype(int).tolist(),
+        boxes_arr[kept_indices],
+        confidences_arr[kept_indices],
+        class_ids_arr[kept_indices].astype(np.int32, copy=False),
     )

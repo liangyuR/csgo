@@ -36,16 +36,46 @@ _SETTLE_MIN_ALPHA = 0.58
 _SETTLE_DISTANCE_PX = 18.0
 _SETTLE_MIN_MOVE_PX = 1
 _SETTLE_MAX_MOVE_PX = 3
+_SPIN_GUARD_S = 0.002
+
+
+@dataclass(frozen=True)
+class RuntimeControlSettings:
+    pid_kp_x: float
+    pid_ki_x: float
+    pid_kd_x: float
+    pid_kp_y: float
+    pid_ki_y: float
+    pid_kd_y: float
+    mouse_move_method: str
+    control_loop_hz: float
+    detect_interval: float
+    sticky_target_enabled: bool
+    lock_retain_radius_px: float
+    lock_retain_time_s: float
+    target_point_smoothing_alpha: float
+    tracker_enabled: bool
+    prediction_lead_time_s: float
+    velocity_ema_alpha: float
+    velocity_deadzone_px_per_s: float
+    screen_motion_compensation_enabled: bool
+    screen_motion_compensation_ratio: float
+    prediction_max_distance_px: float
+    aim_position_deadzone_px: float
+    bezier_curve_enabled: bool
+    bezier_curve_strength: float
+    control_stale_hold_ms: float
+    control_stale_decay_ms: float
+    enable_latency_stats: bool
+    latency_stats_interval: float
+    latency_stats_alpha: float
 
 
 @dataclass
 class ControlLoopState:
     last_tick_perf: float = 0.0
-    last_pid_refresh_time: float = 0.0
-    last_method_check_time: float = 0.0
-    pid_check_interval: float = 1.0
-    method_check_interval: float = 2.0
     cached_mouse_move_method: str = "mouse_event"
+    runtime_refresh_token: int = -1
     bezier_curve_scalar: float = 0.0
     target_locked: bool = False
     smart_tracker: SmartTracker | None = None
@@ -72,6 +102,10 @@ class ControlLoopState:
     latency_ema_hz: float = 0.0
     latency_ema_target_age_ms: float = 0.0
     latency_phase: str = "idle"
+    last_crosshair_x: int | None = None
+    last_crosshair_y: int | None = None
+    last_target_screen_x: float | None = None
+    last_target_screen_y: float | None = None
 
 
 @dataclass(frozen=True)
@@ -81,7 +115,43 @@ class ControlStepResult:
     processed_new_frame: bool
 
 
-def _box_to_tuple(box: list[float] | tuple[float, float, float, float]) -> Box:
+def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
+    return RuntimeControlSettings(
+        pid_kp_x=float(getattr(config, "pid_kp_x", 0.45)),
+        pid_ki_x=float(getattr(config, "pid_ki_x", 0.0)),
+        pid_kd_x=float(getattr(config, "pid_kd_x", 0.0)),
+        pid_kp_y=float(getattr(config, "pid_kp_y", 0.45)),
+        pid_ki_y=float(getattr(config, "pid_ki_y", 0.0)),
+        pid_kd_y=float(getattr(config, "pid_kd_y", 0.0)),
+        mouse_move_method=str(getattr(config, "mouse_move_method", "mouse_event") or "mouse_event"),
+        control_loop_hz=max(float(getattr(config, "control_loop_hz", 500.0) or 500.0), 1.0),
+        detect_interval=max(float(getattr(config, "detect_interval", 0.02) or 0.02), 0.001),
+        sticky_target_enabled=bool(getattr(config, "sticky_target_enabled", True)),
+        lock_retain_radius_px=max(float(getattr(config, "lock_retain_radius_px", 48.0)), 0.0),
+        lock_retain_time_s=max(float(getattr(config, "lock_retain_time_s", 0.12)), 0.0),
+        target_point_smoothing_alpha=min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0),
+        tracker_enabled=bool(getattr(config, "tracker_enabled", False)),
+        prediction_lead_time_s=max(float(getattr(config, "prediction_lead_time_s", 0.018)), 0.0),
+        velocity_ema_alpha=min(max(float(getattr(config, "velocity_ema_alpha", 0.45)), 0.0), 1.0),
+        velocity_deadzone_px_per_s=max(float(getattr(config, "velocity_deadzone_px_per_s", 10.0)), 0.0),
+        screen_motion_compensation_enabled=bool(getattr(config, "screen_motion_compensation_enabled", True)),
+        screen_motion_compensation_ratio=min(
+            max(float(getattr(config, "screen_motion_compensation_ratio", 1.0)), 0.0),
+            1.5,
+        ),
+        prediction_max_distance_px=max(float(getattr(config, "prediction_max_distance_px", 20.0)), 0.0),
+        aim_position_deadzone_px=max(float(getattr(config, "aim_position_deadzone_px", 3.0)), 0.0),
+        bezier_curve_enabled=bool(getattr(config, "bezier_curve_enabled", False)),
+        bezier_curve_strength=float(getattr(config, "bezier_curve_strength", 0.35)),
+        control_stale_hold_ms=max(float(getattr(config, "control_stale_hold_ms", 12.0)), 0.0),
+        control_stale_decay_ms=max(float(getattr(config, "control_stale_decay_ms", 24.0)), 0.0),
+        enable_latency_stats=bool(getattr(config, "enable_latency_stats", False)),
+        latency_stats_interval=max(float(getattr(config, "latency_stats_interval", 1.0)), 0.1),
+        latency_stats_alpha=min(max(float(getattr(config, "latency_stats_alpha", 0.2)), 0.01), 1.0),
+    )
+
+
+def _box_to_tuple(box) -> Box:
     x1, y1, x2, y2 = box
     return float(x1), float(y1), float(x2), float(y2)
 
@@ -100,9 +170,9 @@ def _box_iou(box_a: Box, box_b: Box) -> float:
     xx2 = min(box_a[2], box_b[2])
     yy2 = min(box_a[3], box_b[3])
 
-    w = max(0.0, xx2 - xx1)
-    h = max(0.0, yy2 - yy1)
-    intersection = w * h
+    width = max(0.0, xx2 - xx1)
+    height = max(0.0, yy2 - yy1)
+    intersection = width * height
     if intersection <= 0.0:
         return 0.0
 
@@ -182,11 +252,7 @@ def _move_toward_error(error: float, min_pixels: int, max_pixels: int | None = N
     return int(math.copysign(limit, error))
 
 
-def _determine_control_stage(
-    state: ControlLoopState,
-    final_distance: float,
-    current_time: float,
-) -> str:
+def _determine_control_stage(state: ControlLoopState, final_distance: float, current_time: float) -> str:
     if not state.target_locked:
         return "idle"
     if final_distance <= _SETTLE_DISTANCE_PX:
@@ -207,8 +273,12 @@ def _get_target_smoothing_alpha(
     crosshair_x: int,
     crosshair_y: int,
     current_time: float,
+    settings: RuntimeControlSettings | None = None,
 ) -> float:
-    base_alpha = min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0)
+    if settings is not None:
+        base_alpha = settings.target_point_smoothing_alpha
+    else:
+        base_alpha = min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0)
     distance = math.hypot(target_x - crosshair_x, target_y - crosshair_y)
     stage = _determine_control_stage(state, distance, current_time)
     if stage == "acquire":
@@ -259,6 +329,10 @@ def _clear_lock_state(state: ControlLoopState) -> None:
     state.applied_mouse_dy = 0.0
     state.control_stage = "idle"
     state.tracker_active = False
+    state.last_crosshair_x = None
+    state.last_crosshair_y = None
+    state.last_target_screen_x = None
+    state.last_target_screen_y = None
 
 
 def _reset_control_state(
@@ -277,49 +351,11 @@ def _reset_control_state(
         _clear_lock_state(state)
 
 
-def _build_candidates(
-    payload: DetectionPayload,
-    crosshair_x: int,
-    crosshair_y: int,
-) -> list[tuple[float, float, float, Box]]:
-    candidates: list[tuple[float, float, float, Box]] = []
-    for box in payload.boxes:
-        box_tuple = _box_to_tuple(box)
-        center_x, center_y = _box_center(box_tuple)
-        candidates.append(
-            (
-                _distance_sq(center_x, center_y, crosshair_x, crosshair_y),
-                center_x,
-                center_y,
-                box_tuple,
-            )
-        )
-
-    candidates.sort(key=lambda item: item[0])
-    return candidates
-
-
-def _match_locked_candidate(
-    candidates: list[tuple[float, float, float, Box]],
-    locked_box: Box,
-    lock_retain_radius_px: float,
-) -> tuple[float, float, float, Box] | None:
-    locked_cx, locked_cy = _box_center(locked_box)
-    best_candidate: tuple[float, float, float, Box] | None = None
-    best_sort_key: tuple[float, float, float] | None = None
-
-    for distance_sq, center_x, center_y, box in candidates:
-        iou = _box_iou(box, locked_box)
-        center_distance_sq = _distance_sq(center_x, center_y, locked_cx, locked_cy)
-        if iou < 0.2 and center_distance_sq > (lock_retain_radius_px ** 2):
-            continue
-
-        sort_key = (-iou, center_distance_sq, distance_sq)
-        if best_sort_key is None or sort_key < best_sort_key:
-            best_sort_key = sort_key
-            best_candidate = (distance_sq, center_x, center_y, box)
-
-    return best_candidate
+def _candidate_for_box(box, crosshair_x: int, crosshair_y: int) -> tuple[float, float, float, Box]:
+    box_tuple = _box_to_tuple(box)
+    center_x, center_y = _box_center(box_tuple)
+    distance_sq = _distance_sq(center_x, center_y, crosshair_x, crosshair_y)
+    return distance_sq, center_x, center_y, box_tuple
 
 
 def _select_target(
@@ -329,23 +365,54 @@ def _select_target(
     crosshair_y: int,
     state: ControlLoopState,
     current_time: float,
+    settings: RuntimeControlSettings | None = None,
 ) -> tuple[Box | None, float | None, float | None, bool, bool]:
-    candidates = _build_candidates(payload, crosshair_x, crosshair_y)
-    sticky_enabled = bool(getattr(config, "sticky_target_enabled", True))
-    lock_retain_radius_px = float(getattr(config, "lock_retain_radius_px", 48.0))
-    lock_retain_time_s = float(getattr(config, "lock_retain_time_s", 0.12))
+    if settings is not None:
+        sticky_enabled = settings.sticky_target_enabled
+        lock_retain_radius_px = settings.lock_retain_radius_px
+        lock_retain_time_s = settings.lock_retain_time_s
+    else:
+        sticky_enabled = bool(getattr(config, "sticky_target_enabled", True))
+        lock_retain_radius_px = float(getattr(config, "lock_retain_radius_px", 48.0))
+        lock_retain_time_s = float(getattr(config, "lock_retain_time_s", 0.12))
 
     previous_box = state.locked_box
     selected: tuple[float, float, float, Box] | None = None
     hold_lock = False
+    nearest_candidate: tuple[float, float, float, Box] | None = None
+    best_locked_sort_key: tuple[float, float, float] | None = None
+    locked_center_x = 0.0
+    locked_center_y = 0.0
+    lock_retain_radius_sq = lock_retain_radius_px ** 2
 
     if sticky_enabled and previous_box is not None:
-        selected = _match_locked_candidate(candidates, previous_box, lock_retain_radius_px)
-        if selected is None and (current_time - state.lock_last_seen_time) <= lock_retain_time_s:
-            hold_lock = True
+        locked_center_x, locked_center_y = _box_center(previous_box)
 
-    if selected is None and not hold_lock and candidates:
-        selected = candidates[0]
+    for box in payload.boxes:
+        candidate = _candidate_for_box(box, crosshair_x, crosshair_y)
+        distance_sq, center_x, center_y, box_tuple = candidate
+
+        if nearest_candidate is None or distance_sq < nearest_candidate[0]:
+            nearest_candidate = candidate
+
+        if not sticky_enabled or previous_box is None:
+            continue
+
+        iou = _box_iou(box_tuple, previous_box)
+        center_distance_sq = _distance_sq(center_x, center_y, locked_center_x, locked_center_y)
+        if iou < 0.2 and center_distance_sq > lock_retain_radius_sq:
+            continue
+
+        sort_key = (-iou, center_distance_sq, distance_sq)
+        if best_locked_sort_key is None or sort_key < best_locked_sort_key:
+            best_locked_sort_key = sort_key
+            selected = candidate
+
+    if selected is None and sticky_enabled and previous_box is not None:
+        hold_lock = (current_time - state.lock_last_seen_time) <= lock_retain_time_s
+
+    if selected is None and not hold_lock:
+        selected = nearest_candidate
 
     if selected is None:
         if not hold_lock:
@@ -359,7 +426,6 @@ def _select_target(
     projected_smoothed_y = state.smoothed_target_y
 
     if projected_smoothed_x is not None and projected_smoothed_y is not None:
-        # Project the previously smoothed point into the current frame before blending.
         projected_smoothed_x -= state.applied_mouse_dx
         projected_smoothed_y -= state.applied_mouse_dy
 
@@ -379,6 +445,7 @@ def _select_target(
         crosshair_x,
         crosshair_y,
         current_time,
+        settings=settings,
     )
     if projected_smoothed_x is None or projected_smoothed_y is None:
         state.smoothed_target_x = target_x
@@ -396,6 +463,7 @@ def _select_target(
 def _update_tracker_targets(
     config: Config,
     state: ControlLoopState,
+    settings: RuntimeControlSettings,
     target_x: float,
     target_y: float,
     crosshair_x: int,
@@ -405,26 +473,56 @@ def _update_tracker_targets(
     predicted_x = target_x
     predicted_y = target_y
     tracker_active = False
-    measured_distance = math.hypot(target_x - crosshair_x, target_y - crosshair_y)
-    deadzone_px = max(0.0, float(getattr(config, "aim_position_deadzone_px", 3.0)))
-    in_deadzone = measured_distance <= deadzone_px
 
-    if not bool(getattr(config, "tracker_enabled", False)):
+    if not settings.tracker_enabled:
         _reset_tracker_overlay(config)
         if state.smart_tracker is not None:
             state.smart_tracker.reset()
+        state.last_crosshair_x = crosshair_x
+        state.last_crosshair_y = crosshair_y
+        state.last_target_screen_x = target_x
+        state.last_target_screen_y = target_y
         return predicted_x, predicted_y, tracker_active
 
-    velocity_alpha = float(getattr(config, "velocity_ema_alpha", 0.35))
-    velocity_deadzone = float(getattr(config, "velocity_deadzone_px_per_s", 10.0))
-    if state.smart_tracker is None:
-        state.smart_tracker = SmartTracker(velocity_alpha, velocity_deadzone)
-    else:
-        state.smart_tracker.velocity_ema_alpha = min(max(velocity_alpha, 0.0), 1.0)
-        state.smart_tracker.velocity_deadzone_px_per_s = max(0.0, velocity_deadzone)
+    measured_distance = math.hypot(target_x - crosshair_x, target_y - crosshair_y)
+    in_deadzone = measured_distance <= settings.aim_position_deadzone_px
 
-    jump_reset_distance = max(float(getattr(config, "lock_retain_radius_px", 48.0)) * 2.0, 96.0)
-    state.smart_tracker.update(target_x, target_y, detection_dt, jump_reset_distance)
+    if state.smart_tracker is None:
+        state.smart_tracker = SmartTracker(settings.velocity_ema_alpha, settings.velocity_deadzone_px_per_s)
+    else:
+        state.smart_tracker.velocity_ema_alpha = settings.velocity_ema_alpha
+        state.smart_tracker.velocity_deadzone_px_per_s = settings.velocity_deadzone_px_per_s
+
+    motion_dx = None
+    motion_dy = None
+    if (
+        state.last_target_screen_x is not None
+        and state.last_target_screen_y is not None
+        and state.last_crosshair_x is not None
+        and state.last_crosshair_y is not None
+    ):
+        measured_screen_dx = target_x - state.last_target_screen_x
+        measured_screen_dy = target_y - state.last_target_screen_y
+        self_motion_dx = crosshair_x - state.last_crosshair_x
+        self_motion_dy = crosshair_y - state.last_crosshair_y
+        compensation_ratio = settings.screen_motion_compensation_ratio if settings.screen_motion_compensation_enabled else 0.0
+        motion_dx = measured_screen_dx + (self_motion_dx * compensation_ratio)
+        motion_dy = measured_screen_dy + (self_motion_dy * compensation_ratio)
+
+    jump_reset_distance = max(settings.lock_retain_radius_px * 2.0, 96.0)
+    state.smart_tracker.update(
+        target_x,
+        target_y,
+        detection_dt,
+        jump_reset_distance,
+        motion_dx=motion_dx,
+        motion_dy=motion_dy,
+    )
+
+    state.last_crosshair_x = crosshair_x
+    state.last_crosshair_y = crosshair_y
+    state.last_target_screen_x = target_x
+    state.last_target_screen_y = target_y
 
     config.tracker_current_x = target_x
     config.tracker_current_y = target_y
@@ -432,13 +530,11 @@ def _update_tracker_targets(
     if (
         state.lock_match_frames >= 3
         and not in_deadzone
-        and state.smart_tracker.get_speed() >= velocity_deadzone
+        and state.smart_tracker.get_speed() >= settings.velocity_deadzone_px_per_s
     ):
-        prediction_time_s = max(0.0, float(getattr(config, "prediction_lead_time_s", 0.025)))
-        max_prediction_distance_px = float(getattr(config, "prediction_max_distance_px", 32.0))
         predicted_x, predicted_y = state.smart_tracker.get_predicted_position(
-            prediction_time_s,
-            max_prediction_distance_px,
+            settings.prediction_lead_time_s,
+            settings.prediction_max_distance_px,
         )
         config.tracker_predicted_x = predicted_x
         config.tracker_predicted_y = predicted_y
@@ -454,6 +550,7 @@ def _update_tracker_targets(
 
 def _consume_detection_frame(
     config: Config,
+    settings: RuntimeControlSettings,
     frame: DetectionFrame,
     state: ControlLoopState,
     pid_x: PIDController,
@@ -465,16 +562,13 @@ def _consume_detection_frame(
     detection_dt = (
         frame_perf - state.last_detection_update_perf
         if state.last_detection_update_perf > 0.0 and frame_perf > state.last_detection_update_perf
-        else max(float(getattr(config, "detect_interval", 0.02) or 0.02), 0.001)
+        else settings.detect_interval
     )
     if state.detection_interval_ema_s <= 0.0:
         state.detection_interval_ema_s = detection_dt
     else:
         interval_alpha = 0.35
-        state.detection_interval_ema_s = (
-            ((1.0 - interval_alpha) * state.detection_interval_ema_s)
-            + (interval_alpha * detection_dt)
-        )
+        state.detection_interval_ema_s = ((1.0 - interval_alpha) * state.detection_interval_ema_s) + (interval_alpha * detection_dt)
     state.last_detection_update_perf = frame_perf
     state.last_processed_sequence = frame.sequence
 
@@ -485,6 +579,7 @@ def _consume_detection_frame(
         frame.crosshair_y,
         state,
         current_time,
+        settings=settings,
     )
 
     if hold_lock:
@@ -500,12 +595,17 @@ def _consume_detection_frame(
         if state.smart_tracker is not None:
             state.smart_tracker.reset()
         state.bezier_curve_scalar = random.uniform(-1.0, 1.0)
+        state.last_crosshair_x = None
+        state.last_crosshair_y = None
+        state.last_target_screen_x = None
+        state.last_target_screen_y = None
 
     state.applied_mouse_dx = 0.0
     state.applied_mouse_dy = 0.0
     control_target_x, control_target_y, tracker_active = _update_tracker_targets(
         config,
         state,
+        settings,
         target_x,
         target_y,
         frame.crosshair_x,
@@ -523,6 +623,7 @@ def _consume_detection_frame(
 
 def _apply_control_output(
     config: Config,
+    settings: RuntimeControlSettings,
     state: ControlLoopState,
     pid_x: PIDController,
     pid_y: PIDController,
@@ -545,9 +646,7 @@ def _apply_control_output(
         return "idle", 0.0
 
     target_age_ms = max((current_perf - state.last_target_update_perf) * 1000.0, 0.0)
-    hold_ms = max(float(getattr(config, "control_stale_hold_ms", 40.0)), 0.0)
-    decay_ms = max(float(getattr(config, "control_stale_decay_ms", 60.0)), 0.0)
-    stale_limit_ms = hold_ms + decay_ms
+    stale_limit_ms = settings.control_stale_hold_ms + settings.control_stale_decay_ms
 
     if target_age_ms > stale_limit_ms:
         _reset_control_state(config, state, pid_x, pid_y, clear_lock=True)
@@ -555,63 +654,44 @@ def _apply_control_output(
 
     phase = "fresh" if processed_new_frame else "hold"
     stale_gain = 1.0
-    if not processed_new_frame and target_age_ms > hold_ms:
+    if not processed_new_frame and target_age_ms > settings.control_stale_hold_ms:
         phase = "decay"
-        stale_gain = 1.0 - ((target_age_ms - hold_ms) / max(decay_ms, 1e-6))
+        stale_gain = 1.0 - ((target_age_ms - settings.control_stale_hold_ms) / max(settings.control_stale_decay_ms, 1e-6))
         stale_gain = min(max(stale_gain, 0.0), 1.0)
 
-    measured_error_x = _remaining_error_after_applied_move(
-        state.measured_target_x - crosshair_x,
-        state.applied_mouse_dx,
-    )
-    measured_error_y = _remaining_error_after_applied_move(
-        state.measured_target_y - crosshair_y,
-        state.applied_mouse_dy,
-    )
+    measured_error_x = _remaining_error_after_applied_move(state.measured_target_x - crosshair_x, state.applied_mouse_dx)
+    measured_error_y = _remaining_error_after_applied_move(state.measured_target_y - crosshair_y, state.applied_mouse_dy)
     measured_distance = math.hypot(measured_error_x, measured_error_y)
-    deadzone_px = max(0.0, float(getattr(config, "aim_position_deadzone_px", 3.0)))
-    if measured_distance <= deadzone_px:
+    if measured_distance <= settings.aim_position_deadzone_px:
         pid_x.reset()
         pid_y.reset()
         return phase, target_age_ms
 
-    final_error_x = _remaining_error_after_applied_move(
-        state.control_target_x - crosshair_x,
-        state.applied_mouse_dx,
-    )
-    final_error_y = _remaining_error_after_applied_move(
-        state.control_target_y - crosshair_y,
-        state.applied_mouse_dy,
-    )
+    final_error_x = _remaining_error_after_applied_move(state.control_target_x - crosshair_x, state.applied_mouse_dx)
+    final_error_y = _remaining_error_after_applied_move(state.control_target_y - crosshair_y, state.applied_mouse_dy)
     final_distance = math.hypot(final_error_x, final_error_y)
     control_stage = _determine_control_stage(state, final_distance, current_time)
     state.control_stage = control_stage
 
-    if (
-        getattr(config, "bezier_curve_enabled", False)
-        and control_stage == "track"
-        and not state.tracker_active
-        and final_distance > 20.0
-    ):
-        strength = float(getattr(config, "bezier_curve_strength", 0.35))
+    if settings.bezier_curve_enabled and control_stage == "track" and not state.tracker_active and final_distance > 20.0:
         perp_x = -final_error_y
         perp_y = final_error_x
-        final_error_x += perp_x * strength * state.bezier_curve_scalar
-        final_error_y += perp_y * strength * state.bezier_curve_scalar
+        final_error_x += perp_x * settings.bezier_curve_strength * state.bezier_curve_scalar
+        final_error_y += perp_y * settings.bezier_curve_strength * state.bezier_curve_scalar
 
     stage_gain = _ACQUIRE_GAIN if control_stage == "acquire" else 1.0
     move_x = int(round(pid_x.update(final_error_x, tick_dt) * stale_gain * stage_gain))
     move_y = int(round(pid_y.update(final_error_y, tick_dt) * stale_gain * stage_gain))
 
     if control_stage == "acquire":
-        if abs(final_error_x) > deadzone_px and abs(move_x) < _ACQUIRE_MIN_MOVE_PX:
+        if abs(final_error_x) > settings.aim_position_deadzone_px and abs(move_x) < _ACQUIRE_MIN_MOVE_PX:
             move_x = _move_toward_error(final_error_x, _ACQUIRE_MIN_MOVE_PX)
-        if abs(final_error_y) > deadzone_px and abs(move_y) < _ACQUIRE_MIN_MOVE_PX:
+        if abs(final_error_y) > settings.aim_position_deadzone_px and abs(move_y) < _ACQUIRE_MIN_MOVE_PX:
             move_y = _move_toward_error(final_error_y, _ACQUIRE_MIN_MOVE_PX)
     elif control_stage == "settle":
-        if abs(final_error_x) > deadzone_px and abs(move_x) < _SETTLE_MIN_MOVE_PX:
+        if abs(final_error_x) > settings.aim_position_deadzone_px and abs(move_x) < _SETTLE_MIN_MOVE_PX:
             move_x = _move_toward_error(final_error_x, _SETTLE_MIN_MOVE_PX, _SETTLE_MAX_MOVE_PX)
-        if abs(final_error_y) > deadzone_px and abs(move_y) < _SETTLE_MIN_MOVE_PX:
+        if abs(final_error_y) > settings.aim_position_deadzone_px and abs(move_y) < _SETTLE_MIN_MOVE_PX:
             move_y = _move_toward_error(final_error_y, _SETTLE_MIN_MOVE_PX, _SETTLE_MAX_MOVE_PX)
 
     move_x = _clamp_move_to_stage_limit(move_x, final_error_x, control_stage)
@@ -632,7 +712,9 @@ def run_control_step(
     current_perf: float,
     current_time: float,
     tick_dt: float,
+    settings: RuntimeControlSettings | None = None,
 ) -> ControlStepResult:
+    active_settings = settings or _build_runtime_settings(config)
     processed_new_frame = False
 
     if frame is None or not frame.aiming_active:
@@ -644,6 +726,7 @@ def run_control_step(
     if frame.sequence != state.last_processed_sequence:
         processed_new_frame = _consume_detection_frame(
             config,
+            active_settings,
             frame,
             state,
             pid_x,
@@ -654,6 +737,7 @@ def run_control_step(
 
     phase, target_age_ms = _apply_control_output(
         config,
+        active_settings,
         state,
         pid_x,
         pid_y,
@@ -662,25 +746,24 @@ def run_control_step(
         tick_dt,
         current_perf,
         current_time,
-        state.cached_mouse_move_method,
+        active_settings.mouse_move_method,
         processed_new_frame,
     )
+    state.cached_mouse_move_method = active_settings.mouse_move_method
     return ControlStepResult(phase, target_age_ms, processed_new_frame)
 
 
 def _update_control_latency_stats(
-    config: Config,
+    settings: RuntimeControlSettings,
     state: ControlLoopState,
     tick_start_perf: float,
     tick_end_perf: float,
     phase: str,
     target_age_ms: float,
 ) -> None:
-    if not getattr(config, "enable_latency_stats", False):
+    if not settings.enable_latency_stats:
         return
 
-    alpha = float(getattr(config, "latency_stats_alpha", 0.2))
-    alpha = min(max(alpha, 0.01), 1.0)
     tick_ms = (tick_end_perf - tick_start_perf) * 1000.0
     hz = 1000.0 / tick_ms if tick_ms > 0 else 0.0
 
@@ -689,14 +772,14 @@ def _update_control_latency_stats(
         state.latency_ema_hz = hz
         state.latency_ema_target_age_ms = target_age_ms
     else:
+        alpha = settings.latency_stats_alpha
         state.latency_ema_tick_ms = ((1.0 - alpha) * state.latency_ema_tick_ms) + (alpha * tick_ms)
         state.latency_ema_hz = ((1.0 - alpha) * state.latency_ema_hz) + (alpha * hz)
         state.latency_ema_target_age_ms = ((1.0 - alpha) * state.latency_ema_target_age_ms) + (alpha * target_age_ms)
 
     state.latency_phase = phase
-    report_interval = float(getattr(config, "latency_stats_interval", 1.0))
     now = time.time()
-    if now - state.latency_last_report_time >= report_interval:
+    if now - state.latency_last_report_time >= settings.latency_stats_interval:
         state.latency_last_report_time = now
         logger.info(
             "[Control] tick=%.2fms hz=%.1f target_age=%.1fms phase=%s",
@@ -707,40 +790,55 @@ def _update_control_latency_stats(
         )
 
 
+def _wait_precisely(duration_s: float) -> None:
+    if duration_s <= 0.0:
+        return
+    if duration_s > _SPIN_GUARD_S:
+        time.sleep(duration_s - _SPIN_GUARD_S)
+    target_perf = time.perf_counter() + min(duration_s, _SPIN_GUARD_S)
+    while time.perf_counter() < target_perf:
+        pass
+
+
+def _apply_runtime_refresh(
+    config: Config,
+    state: ControlLoopState,
+    pid_x: PIDController,
+    pid_y: PIDController,
+) -> RuntimeControlSettings:
+    settings = _build_runtime_settings(config)
+    refresh_token = int(getattr(config, "runtime_refresh_token", 0) or 0)
+    if refresh_token != state.runtime_refresh_token:
+        pid_x.Kp, pid_x.Ki, pid_x.Kd = settings.pid_kp_x, settings.pid_ki_x, settings.pid_kd_x
+        pid_y.Kp, pid_y.Ki, pid_y.Kd = settings.pid_kp_y, settings.pid_ki_y, settings.pid_kd_y
+        state.cached_mouse_move_method = settings.mouse_move_method
+        if state.runtime_refresh_token >= 0:
+            _reset_control_state(config, state, pid_x, pid_y, clear_lock=False)
+        state.runtime_refresh_token = refresh_token
+    return settings
+
+
 def control_loop(config: Config, latest_detection_state: LatestDetectionState) -> None:
-    control_hz = max(float(getattr(config, "control_loop_hz", 500.0) or 500.0), 1.0)
-    pid_x = PIDController(config.pid_kp_x, config.pid_ki_x, config.pid_kd_x)
-    pid_y = PIDController(config.pid_kp_y, config.pid_ki_y, config.pid_kd_y)
-    state = ControlLoopState(cached_mouse_move_method=config.mouse_move_method)
+    initial_settings = _build_runtime_settings(config)
+    pid_x = PIDController(initial_settings.pid_kp_x, initial_settings.pid_ki_x, initial_settings.pid_kd_x)
+    pid_y = PIDController(initial_settings.pid_kp_y, initial_settings.pid_ki_y, initial_settings.pid_kd_y)
+    state = ControlLoopState(cached_mouse_move_method=initial_settings.mouse_move_method)
 
     logger.info(
         "Control loop started: control_hz=%.1f stale_hold=%.1fms stale_decay=%.1fms",
-        control_hz,
-        float(getattr(config, "control_stale_hold_ms", 40.0)),
-        float(getattr(config, "control_stale_decay_ms", 60.0)),
+        initial_settings.control_loop_hz,
+        initial_settings.control_stale_hold_ms,
+        initial_settings.control_stale_decay_ms,
     )
 
     while config.Running:
         try:
             tick_start_perf = time.perf_counter()
             current_time = time.time()
+            settings = _apply_runtime_refresh(config, state, pid_x, pid_y)
             frame = latest_detection_state.snapshot()
-            tick_interval = _resolve_control_tick_interval(config, state, frame)
-            tick_dt = tick_interval
-
-            if state.last_tick_perf == 0.0:
-                tick_dt = tick_interval
-            else:
-                tick_dt = max(tick_start_perf - state.last_tick_perf, 1e-4)
-
-            if current_time - state.last_pid_refresh_time > state.pid_check_interval:
-                pid_x.Kp, pid_x.Ki, pid_x.Kd = config.pid_kp_x, config.pid_ki_x, config.pid_kd_x
-                pid_y.Kp, pid_y.Ki, pid_y.Kd = config.pid_kp_y, config.pid_ki_y, config.pid_kd_y
-                state.last_pid_refresh_time = current_time
-
-            if current_time - state.last_method_check_time > state.method_check_interval:
-                state.cached_mouse_move_method = config.mouse_move_method
-                state.last_method_check_time = current_time
+            tick_interval = _resolve_control_tick_interval(settings, state, frame)
+            tick_dt = tick_interval if state.last_tick_perf == 0.0 else max(tick_start_perf - state.last_tick_perf, 1e-4)
 
             result = run_control_step(
                 config,
@@ -751,10 +849,11 @@ def control_loop(config: Config, latest_detection_state: LatestDetectionState) -
                 tick_start_perf,
                 current_time,
                 tick_dt,
+                settings=settings,
             )
             tick_end_perf = time.perf_counter()
             _update_control_latency_stats(
-                config,
+                settings,
                 state,
                 tick_start_perf,
                 tick_end_perf,
@@ -764,9 +863,9 @@ def control_loop(config: Config, latest_detection_state: LatestDetectionState) -
 
             state.last_tick_perf = tick_start_perf
             remaining = tick_interval - (tick_end_perf - tick_start_perf)
-            if remaining > 0:
-                time.sleep(remaining)
-        except Exception as e:
-            logger.error("Control loop error: %s", e)
+            if remaining > 0.0:
+                _wait_precisely(remaining)
+        except Exception as exc:
+            logger.error("Control loop error: %s", exc)
             traceback.print_exc()
             time.sleep(1.0)

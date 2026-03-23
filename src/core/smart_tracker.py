@@ -9,7 +9,7 @@ from typing import Tuple
 class SmartTracker:
     """Track a smoothed target point and estimate bounded future position."""
 
-    def __init__(self, velocity_ema_alpha: float = 0.35, velocity_deadzone_px_per_s: float = 10.0) -> None:
+    def __init__(self, velocity_ema_alpha: float = 0.45, velocity_deadzone_px_per_s: float = 10.0) -> None:
         self.velocity_ema_alpha = min(max(float(velocity_ema_alpha), 0.0), 1.0)
         self.velocity_deadzone_px_per_s = max(0.0, float(velocity_deadzone_px_per_s))
         self.reset()
@@ -21,7 +21,15 @@ class SmartTracker:
         self.vy: float = 0.0
         self.initialized: bool = False
 
-    def update(self, measured_x: float, measured_y: float, dt: float, jump_reset_distance_px: float) -> Tuple[float, float]:
+    def update(
+        self,
+        measured_x: float,
+        measured_y: float,
+        dt: float,
+        jump_reset_distance_px: float,
+        motion_dx: float | None = None,
+        motion_dy: float | None = None,
+    ) -> Tuple[float, float]:
         safe_dt = max(float(dt), 1e-4)
         jump_limit = max(float(jump_reset_distance_px), 0.0)
 
@@ -33,13 +41,18 @@ class SmartTracker:
             self.initialized = True
             return self.vx, self.vy
 
-        dx = measured_x - float(self.last_x)
-        dy = measured_y - float(self.last_y)
-        raw_vx = dx / safe_dt
-        raw_vy = dy / safe_dt
+        measured_dx = measured_x - float(self.last_x)
+        measured_dy = measured_y - float(self.last_y)
+        resolved_motion_dx = measured_dx if motion_dx is None else float(motion_dx)
+        resolved_motion_dy = measured_dy if motion_dy is None else float(motion_dy)
+        raw_vx = resolved_motion_dx / safe_dt
+        raw_vy = resolved_motion_dy / safe_dt
 
         dot_product = (raw_vx * self.vx) + (raw_vy * self.vy)
-        jump_distance = math.hypot(dx, dy)
+        jump_distance = max(
+            math.hypot(measured_dx, measured_dy),
+            math.hypot(resolved_motion_dx, resolved_motion_dy),
+        )
 
         if jump_distance >= jump_limit or dot_product < 0.0:
             self.vx = raw_vx

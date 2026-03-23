@@ -49,7 +49,7 @@ def auto_fire_loop(config: Config, boxes_queue: queue.Queue) -> None:
                     if current_time - last_fire_time >= config.auto_fire_interval:
                         if current_time - last_box_update >= box_update_interval:
                             try:
-                                if not boxes_queue.empty():
+                                while True:
                                     cached_payload = boxes_queue.get_nowait()
                                     last_box_update = current_time
                             except queue.Empty:
@@ -57,13 +57,15 @@ def auto_fire_loop(config: Config, boxes_queue: queue.Queue) -> None:
                             except Exception as e:
                                 logger.warning("AutoFire queue read failed: %s", e)
 
-                        if cached_payload and getattr(cached_payload, "boxes", None):
+                        if (
+                            cached_payload is not None
+                            and getattr(cached_payload, "boxes", None) is not None
+                            and getattr(cached_payload.boxes, "shape", (0,))[0] > 0
+                        ):
                             crosshair_x, crosshair_y = config.crosshairX, config.crosshairY
-                            should_fire = False
                             for box in cached_payload.boxes:
                                 x1, y1, x2, y2 = box
-                                should_fire = x1 <= crosshair_x <= x2 and y1 <= crosshair_y <= y2
-                                if should_fire:
+                                if x1 <= crosshair_x <= x2 and y1 <= crosshair_y <= y2:
                                     send_mouse_click(getattr(config, "mouse_click_method", "mouse_event"))
                                     last_fire_time = current_time
                                     break

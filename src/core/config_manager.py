@@ -114,10 +114,20 @@ class ConfigManager:
                 "xbox_sensitivity": getattr(config_instance, "xbox_sensitivity", 1.0),
                 "xbox_deadzone": getattr(config_instance, "xbox_deadzone", 0.05),
                 "xbox_auto_connect": getattr(config_instance, "xbox_auto_connect", True),
-                "tracker_enabled": getattr(config_instance, "tracker_enabled", False),
-                "prediction_lead_time_s": getattr(config_instance, "prediction_lead_time_s", 0.025),
-                "velocity_ema_alpha": getattr(config_instance, "velocity_ema_alpha", 0.35),
+                "tracker_enabled": getattr(config_instance, "tracker_enabled", True),
+                "prediction_lead_time_s": getattr(config_instance, "prediction_lead_time_s", 0.018),
+                "velocity_ema_alpha": getattr(config_instance, "velocity_ema_alpha", 0.45),
                 "velocity_deadzone_px_per_s": getattr(config_instance, "velocity_deadzone_px_per_s", 10.0),
+                "screen_motion_compensation_enabled": getattr(
+                    config_instance,
+                    "screen_motion_compensation_enabled",
+                    True,
+                ),
+                "screen_motion_compensation_ratio": getattr(
+                    config_instance,
+                    "screen_motion_compensation_ratio",
+                    1.0,
+                ),
                 "tracker_show_prediction": getattr(config_instance, "tracker_show_prediction", True),
                 "enable_latency_stats": getattr(config_instance, "enable_latency_stats", False),
                 "latency_stats_interval": getattr(config_instance, "latency_stats_interval", 1.0),
@@ -127,7 +137,9 @@ class ConfigManager:
                 "lock_retain_radius_px": getattr(config_instance, "lock_retain_radius_px", 48.0),
                 "lock_retain_time_s": getattr(config_instance, "lock_retain_time_s", 0.12),
                 "target_point_smoothing_alpha": getattr(config_instance, "target_point_smoothing_alpha", 0.35),
-                "prediction_max_distance_px": getattr(config_instance, "prediction_max_distance_px", 32.0),
+                "prediction_max_distance_px": getattr(config_instance, "prediction_max_distance_px", 20.0),
+                "control_stale_hold_ms": getattr(config_instance, "control_stale_hold_ms", 12.0),
+                "control_stale_decay_ms": getattr(config_instance, "control_stale_decay_ms", 24.0),
             }
         )
 
