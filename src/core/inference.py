@@ -61,9 +61,9 @@ class PIDController:
         return output
 
     def _calculate_adjusted_kp(self, kp: float) -> float:
-        if kp <= 0.5:
-            return kp
-        return 0.5 + (kp - 0.5) * 3.0
+        # Linear passthrough: the previous 3x ramp above Kp=0.5 caused
+        # oscillation at large errors and undershoot at small ones.
+        return kp
 
 
 def preprocess_image(

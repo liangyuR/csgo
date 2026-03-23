@@ -10,6 +10,11 @@ import traceback
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+try:
+    import win32api as _win32api  # type: ignore[import]
+except ImportError:
+    _win32api = None  # type: ignore[assignment]
+
 from win_utils import send_mouse_move
 
 from .detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
@@ -118,10 +123,10 @@ class ControlStepResult:
 def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
     return RuntimeControlSettings(
         pid_kp_x=float(getattr(config, "pid_kp_x", 0.45)),
-        pid_ki_x=float(getattr(config, "pid_ki_x", 0.0)),
+        pid_ki_x=float(getattr(config, "pid_ki_x", 0.005)),
         pid_kd_x=float(getattr(config, "pid_kd_x", 0.0)),
         pid_kp_y=float(getattr(config, "pid_kp_y", 0.45)),
-        pid_ki_y=float(getattr(config, "pid_ki_y", 0.0)),
+        pid_ki_y=float(getattr(config, "pid_ki_y", 0.005)),
         pid_kd_y=float(getattr(config, "pid_kd_y", 0.0)),
         mouse_move_method=str(getattr(config, "mouse_move_method", "mouse_event") or "mouse_event"),
         control_loop_hz=max(float(getattr(config, "control_loop_hz", 500.0) or 500.0), 1.0),
@@ -131,7 +136,7 @@ def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
         lock_retain_time_s=max(float(getattr(config, "lock_retain_time_s", 0.12)), 0.0),
         target_point_smoothing_alpha=min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0),
         tracker_enabled=bool(getattr(config, "tracker_enabled", False)),
-        prediction_lead_time_s=max(float(getattr(config, "prediction_lead_time_s", 0.018)), 0.0),
+        prediction_lead_time_s=max(float(getattr(config, "prediction_lead_time_s", 0.05)), 0.0),
         velocity_ema_alpha=min(max(float(getattr(config, "velocity_ema_alpha", 0.45)), 0.0), 1.0),
         velocity_deadzone_px_per_s=max(float(getattr(config, "velocity_deadzone_px_per_s", 10.0)), 0.0),
         screen_motion_compensation_enabled=bool(getattr(config, "screen_motion_compensation_enabled", True)),
@@ -139,12 +144,12 @@ def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
             max(float(getattr(config, "screen_motion_compensation_ratio", 1.0)), 0.0),
             1.5,
         ),
-        prediction_max_distance_px=max(float(getattr(config, "prediction_max_distance_px", 20.0)), 0.0),
+        prediction_max_distance_px=max(float(getattr(config, "prediction_max_distance_px", 40.0)), 0.0),
         aim_position_deadzone_px=max(float(getattr(config, "aim_position_deadzone_px", 3.0)), 0.0),
         bezier_curve_enabled=bool(getattr(config, "bezier_curve_enabled", False)),
         bezier_curve_strength=float(getattr(config, "bezier_curve_strength", 0.35)),
-        control_stale_hold_ms=max(float(getattr(config, "control_stale_hold_ms", 12.0)), 0.0),
-        control_stale_decay_ms=max(float(getattr(config, "control_stale_decay_ms", 24.0)), 0.0),
+        control_stale_hold_ms=max(float(getattr(config, "control_stale_hold_ms", 20.0)), 0.0),
+        control_stale_decay_ms=max(float(getattr(config, "control_stale_decay_ms", 40.0)), 0.0),
         enable_latency_stats=bool(getattr(config, "enable_latency_stats", False)),
         latency_stats_interval=max(float(getattr(config, "latency_stats_interval", 1.0)), 0.1),
         latency_stats_alpha=min(max(float(getattr(config, "latency_stats_alpha", 0.2)), 0.01), 1.0),
@@ -285,7 +290,16 @@ def _get_target_smoothing_alpha(
         return max(base_alpha, _ACQUIRE_MIN_ALPHA)
     if stage == "settle":
         return max(base_alpha, _SETTLE_MIN_ALPHA)
-    return max(base_alpha, _TRACK_MIN_ALPHA)
+
+    # Speed-adaptive boost for tracking: faster-moving targets get a higher
+    # alpha so the smoothed position keeps up instead of lagging behind.
+    speed_boost = 0.0
+    if state.smart_tracker is not None:
+        speed = state.smart_tracker.get_speed()
+        # Ramp from 0 to +0.35 between 0 and 600 px/s
+        speed_boost = min(speed / 600.0, 1.0) * 0.35
+
+    return max(base_alpha + speed_boost, _TRACK_MIN_ALPHA)
 
 
 def _resolve_control_tick_interval(
@@ -634,6 +648,7 @@ def _apply_control_output(
     current_time: float,
     mouse_method: str,
     processed_new_frame: bool,
+    live_crosshair_pos: tuple[int, int] | None = None,
 ) -> tuple[str, float]:
     if (
         not state.target_locked
@@ -644,6 +659,11 @@ def _apply_control_output(
         or state.last_target_update_perf <= 0.0
     ):
         return "idle", 0.0
+
+    # Use the freshest available crosshair position to minimize lag when the
+    # player is actively moving their mouse between detection frames.
+    if live_crosshair_pos is not None:
+        crosshair_x, crosshair_y = live_crosshair_pos
 
     target_age_ms = max((current_perf - state.last_target_update_perf) * 1000.0, 0.0)
     stale_limit_ms = settings.control_stale_hold_ms + settings.control_stale_decay_ms
@@ -713,6 +733,7 @@ def run_control_step(
     current_time: float,
     tick_dt: float,
     settings: RuntimeControlSettings | None = None,
+    live_crosshair_pos: tuple[int, int] | None = None,
 ) -> ControlStepResult:
     active_settings = settings or _build_runtime_settings(config)
     processed_new_frame = False
@@ -748,6 +769,7 @@ def run_control_step(
         current_time,
         active_settings.mouse_move_method,
         processed_new_frame,
+        live_crosshair_pos=live_crosshair_pos,
     )
     state.cached_mouse_move_method = active_settings.mouse_move_method
     return ControlStepResult(phase, target_age_ms, processed_new_frame)
@@ -840,6 +862,16 @@ def control_loop(config: Config, latest_detection_state: LatestDetectionState) -
             tick_interval = _resolve_control_tick_interval(settings, state, frame)
             tick_dt = tick_interval if state.last_tick_perf == 0.0 else max(tick_start_perf - state.last_tick_perf, 1e-4)
 
+            # Sample the freshest cursor position right before applying control
+            # output so the error calculation reflects where the crosshair IS,
+            # not where it was when the detection frame was captured.
+            live_crosshair: tuple[int, int] | None = None
+            if _win32api is not None:
+                try:
+                    live_crosshair = _win32api.GetCursorPos()
+                except (OSError, RuntimeError):
+                    pass
+
             result = run_control_step(
                 config,
                 state,
@@ -850,6 +882,7 @@ def control_loop(config: Config, latest_detection_state: LatestDetectionState) -
                 current_time,
                 tick_dt,
                 settings=settings,
+                live_crosshair_pos=live_crosshair,
             )
             tick_end_perf = time.perf_counter()
             _update_control_latency_stats(

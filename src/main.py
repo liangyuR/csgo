@@ -50,6 +50,12 @@ from core.detection_state import LatestDetectionState
 from core.key_listener import aim_toggle_key_listener
 from core.model_registry import get_model_spec
 from core.ultralytics_runtime import UltralyticsEngineModel
+
+try:
+    from core.tensorrt_runtime import TensorRTEngineModel, is_available as _trt_direct_available
+except Exception:
+    TensorRTEngineModel = None  # type: ignore[assignment,misc]
+    _trt_direct_available = lambda: False  # type: ignore[assignment]
 from gui.disclaimer_dialog import DisclaimerDialog
 from gui.overlay import PyQtOverlay
 from gui.status_panel import StatusPanel
@@ -105,6 +111,23 @@ def _load_ultralytics_model(config: Config, model_id: str):
     model_spec, model_path = _resolve_model_runtime_inputs(config, model_id)
     if model_spec is None or model_path is None:
         return None, None
+
+    # Prefer direct TensorRT runtime (lower latency) when available
+    if TensorRTEngineModel is not None and _trt_direct_available():
+        try:
+            model = TensorRTEngineModel(model_path, input_size=model_spec.input_size)
+            config.current_provider = model.provider_name
+            config.model_id = model_spec.model_id
+            config.model_path = model_spec.engine_path
+            config.model_input_size = model_spec.input_size
+            logger.info(
+                "Loaded model %s with provider %s (direct TensorRT)",
+                model_spec.display_name,
+                config.current_provider,
+            )
+            return model_spec, model
+        except Exception as e:
+            logger.warning("Direct TensorRT load failed (%s), falling back to Ultralytics", e)
 
     model = UltralyticsEngineModel(model_path, input_size=model_spec.input_size)
     config.current_provider = model.provider_name
