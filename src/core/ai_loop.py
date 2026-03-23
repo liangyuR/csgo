@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 import win32api
-from win_utils.key_utils import is_key_pressed
+from win_utils import is_key_pressed
 
 from .capture import ScreenCaptureBackend, create_capture_backend
 from .detection_state import DetectionFrame, DetectionPayload, LatestDetectionState, empty_detection_payload
@@ -429,9 +429,14 @@ def ai_logic_loop(
                     postprocess_end_perf,
                 )
 
-                desired_interval = settings.detect_interval if is_aiming else settings.idle_detect_interval
-                remaining = desired_interval - (time.perf_counter() - loop_start_perf)
-                _wait_precisely(remaining)
+                # When aiming, run inference back-to-back at full GPU speed.
+                # DXCam's continuous capture thread provides a fresh frame on the
+                # next grab() call without blocking, so there is no benefit to
+                # sleeping here.  During idle (not aiming), still throttle to
+                # avoid unnecessary GPU and CPU usage.
+                if not is_aiming:
+                    remaining = settings.idle_detect_interval - (time.perf_counter() - loop_start_perf)
+                    _wait_precisely(remaining)
             except Exception as e:
                 logger.error("AI loop error: %s", e)
                 traceback.print_exc()

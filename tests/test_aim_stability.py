@@ -154,11 +154,11 @@ class AimStabilityTests(unittest.TestCase):
         self.assertTrue(config.tracker_enabled)
         self.assertTrue(config.screen_motion_compensation_enabled)
         self.assertAlmostEqual(config.screen_motion_compensation_ratio, 1.0)
-        self.assertAlmostEqual(config.prediction_lead_time_s, 0.018)
+        self.assertAlmostEqual(config.prediction_lead_time_s, 0.05)
         self.assertAlmostEqual(config.velocity_ema_alpha, 0.45)
-        self.assertAlmostEqual(config.prediction_max_distance_px, 20.0)
-        self.assertAlmostEqual(config.control_stale_hold_ms, 12.0)
-        self.assertAlmostEqual(config.control_stale_decay_ms, 24.0)
+        self.assertAlmostEqual(config.prediction_max_distance_px, 40.0)
+        self.assertAlmostEqual(config.control_stale_hold_ms, 20.0)
+        self.assertAlmostEqual(config.control_stale_decay_ms, 40.0)
 
     def test_runtime_refresh_token_helper_increments_monotonically(self) -> None:
         config = SimpleNamespace(runtime_refresh_token=0)
