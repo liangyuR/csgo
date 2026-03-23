@@ -1,8 +1,23 @@
-"""Raw TensorRT engine runtime — minimal Python overhead inference.
+"""Raw TensorRT engine runtime — no pycuda, uses torch.cuda + CUDA Graphs.
 
-Bypasses Ultralytics predict() pipeline entirely: no letterboxing wrapper,
-no Results object construction, no per-call buffer allocation.
-Requires: tensorrt, pycuda
+Bypasses Ultralytics predict() pipeline: no letterbox wrapper,
+no Results construction, no per-call buffer allocation.
+
+Requires:
+  tensorrt  — Python wheel (same install as the C++ TRT used by Ultralytics)
+  torch     — already present via Ultralytics; provides all CUDA memory ops
+
+Why torch instead of pycuda:
+  pycuda.autoinit (used in the old version) must run AFTER a CUDA context
+  exists.  When tensorrt_runtime is imported at startup — before PyTorch or
+  Ultralytics touch the GPU — autoinit silently fails and _TRT_AVAILABLE
+  stays False.  Using torch.cuda avoids this entirely: torch.cuda.init() is
+  idempotent and always safe to call.
+
+CUDA Graph optimisation:
+  After warmup(), execute_async_v3 + H2D/D2H copies are captured into a
+  replayable CUDA Graph.  Replay eliminates per-call CPU kernel-dispatch
+  overhead (~0.5-1 ms for small models like YOLO nano).
 """
 
 from __future__ import annotations
@@ -20,45 +35,67 @@ EMPTY_DETECTION_PAYLOAD = empty_detection_payload()
 
 _TRT_AVAILABLE = False
 _trt = None
-_cuda = None
+_torch = None
 
 try:
     import tensorrt as _trt_mod  # type: ignore[import-not-found]
-    import pycuda.driver as _cuda_mod  # type: ignore[import-not-found]
-    import pycuda.autoinit  # type: ignore[import-not-found]  # noqa: F401
+    import torch as _torch_mod  # type: ignore[import-not-found]
 
-    _trt = _trt_mod
-    _cuda = _cuda_mod
-    _TRT_AVAILABLE = True
+    # torch.cuda.is_available() is a safe CPU-only check; no context required
+    if _torch_mod.cuda.is_available():
+        _trt = _trt_mod
+        _torch = _torch_mod
+        _TRT_AVAILABLE = True
 except Exception:
     pass
 
 _TRT_LOGGER = _trt.Logger(_trt.Logger.WARNING) if _TRT_AVAILABLE and _trt is not None else None
 
+# Populated once after _trt and _torch are confirmed live
+_TRT_TO_TORCH_DTYPE: dict = {}
+
+
+def _init_dtype_map() -> None:
+    if _TRT_TO_TORCH_DTYPE or not _TRT_AVAILABLE:
+        return
+    import torch
+    _TRT_TO_TORCH_DTYPE.update(
+        {
+            _trt.DataType.FLOAT: torch.float32,
+            _trt.DataType.HALF: torch.float16,
+            _trt.DataType.INT32: torch.int32,
+            _trt.DataType.INT8: torch.int8,
+            _trt.DataType.BOOL: torch.bool,
+        }
+    )
+
 
 def is_available() -> bool:
-    """Return True if tensorrt + pycuda are importable."""
+    """Return True if tensorrt Python wheel + torch CUDA are importable."""
     return _TRT_AVAILABLE
 
 
 class TensorRTEngineModel:
-    """Direct TensorRT inference with pre-allocated page-locked CUDA buffers.
+    """Direct TensorRT inference with torch.cuda buffers and CUDA Graph replay.
 
-    Compared to UltralyticsEngineModel.detect():
-    - No letterbox/resize wrapper
-    - No Ultralytics Results construction overhead
-    - Reuses page-locked host and device buffers every call
-    - Runs execute_async_v3 (TRT 8.5+) or execute_async_v2 (TRT 8.x)
+    vs the previous pycuda implementation:
+    - No pycuda dependency → no autoinit race at startup
+    - Uses the same CUDA context as Ultralytics/PyTorch (zero conflicts)
+    - CUDA Graph captured during warmup → near-zero dispatch overhead per call
     """
 
     provider_name = "TensorRT/Direct"
 
     def __init__(self, engine_path: str, input_size: int) -> None:
-        if not _TRT_AVAILABLE or _trt is None or _cuda is None:
+        if not _TRT_AVAILABLE or _trt is None or _torch is None:
             raise RuntimeError(
-                "tensorrt and pycuda are required for TensorRTEngineModel. "
-                "pip install tensorrt pycuda"
+                "tensorrt Python wheel and CUDA-enabled torch are required. "
+                "Install: pip install tensorrt"
             )
+        _init_dtype_map()
+
+        # Safe no-op if already initialised by Ultralytics
+        _torch.cuda.init()
 
         self.engine_path = engine_path
         self.input_size = int(input_size)
@@ -72,66 +109,132 @@ class TensorRTEngineModel:
             raise RuntimeError(f"Failed to deserialize TensorRT engine: {engine_path}")
 
         self._context = self._engine.create_execution_context()
-        self._stream = _cuda.Stream()
-        self._inputs: list[dict] = []
-        self._outputs: list[dict] = []
-        self._bindings: list[int] = []
+
+        # Dedicated CUDA stream — keeps TRT work isolated from torch's default stream
+        self._stream = _torch.cuda.Stream()
+
+        # Pinned CPU + GPU tensor pairs keyed by binding name
+        self._io: dict[str, dict] = {}
+        self._input_name: str = ""
+        self._output_name: str = ""
+        self._bindings: list[int] = []  # for legacy TRT 8 execute_async_v2
+
         self._allocate_buffers()
+
         self._preprocess_buf: np.ndarray | None = None
-        self._input_dtype = self._inputs[0]["dtype"] if self._inputs else np.float32
+        self._fp16_input: bool = self._io[self._input_name]["dtype"] == _torch.float16
+
+        # Filled by _capture_cuda_graph() called from warmup()
+        self._cuda_graph: Any = None
+        self._graph_captured = False
 
     # ------------------------------------------------------------------
-    # Buffer allocation — handles TRT 10 (num_io_tensors) and TRT 8 (num_bindings)
+    # Buffer allocation — supports TRT 10 (num_io_tensors) and TRT 8
     # ------------------------------------------------------------------
 
     def _allocate_buffers(self) -> None:
-        use_new_api = hasattr(self._engine, "num_io_tensors")
-        if use_new_api:
-            self._allocate_buffers_new_api()
+        if hasattr(self._engine, "num_io_tensors"):
+            self._allocate_buffers_v2()
         else:
-            self._allocate_buffers_legacy_api()
+            self._allocate_buffers_legacy()
 
-    def _allocate_buffers_new_api(self) -> None:
+    def _allocate_buffers_v2(self) -> None:
         for i in range(self._engine.num_io_tensors):
             name = self._engine.get_tensor_name(i)
-            dtype = _trt.nptype(self._engine.get_tensor_dtype(name))
+            trt_dtype = self._engine.get_tensor_dtype(name)
             raw_shape = tuple(self._engine.get_tensor_shape(name))
             shape = tuple(self.input_size if s < 0 else s for s in raw_shape)
-            host_mem = _cuda.pagelocked_empty(int(np.prod(shape)), dtype)
-            device_mem = _cuda.mem_alloc(host_mem.nbytes)
-            self._bindings.append(int(device_mem))
-            entry = {
-                "name": name,
-                "host": host_mem,
-                "device": device_mem,
+            numel = int(np.prod(shape))
+            dtype = _TRT_TO_TORCH_DTYPE.get(trt_dtype, _torch.float32)
+
+            gpu_buf = _torch.empty(numel, dtype=dtype, device="cuda")
+            cpu_buf = _torch.empty(numel, dtype=dtype).pin_memory()
+
+            is_input = self._engine.get_tensor_mode(name) == _trt.TensorIOMode.INPUT
+            self._context.set_tensor_address(name, gpu_buf.data_ptr())
+            self._io[name] = {
+                "cpu": cpu_buf,
+                "gpu": gpu_buf,
                 "shape": shape,
+                "is_input": is_input,
                 "dtype": dtype,
             }
-            mode = self._engine.get_tensor_mode(name)
-            if mode == _trt.TensorIOMode.INPUT:
-                self._inputs.append(entry)
-            else:
-                self._outputs.append(entry)
+            if is_input:
+                self._input_name = name
+            elif not self._output_name:
+                self._output_name = name
 
-    def _allocate_buffers_legacy_api(self) -> None:
+    def _allocate_buffers_legacy(self) -> None:
         for binding in self._engine:
-            dtype = _trt.nptype(self._engine.get_binding_dtype(binding))
+            trt_dtype = self._engine.get_binding_dtype(binding)
             raw_shape = tuple(self._engine.get_binding_shape(binding))
             shape = tuple(self.input_size if s < 0 else s for s in raw_shape)
-            host_mem = _cuda.pagelocked_empty(int(np.prod(shape)), dtype)
-            device_mem = _cuda.mem_alloc(host_mem.nbytes)
-            self._bindings.append(int(device_mem))
-            entry = {
-                "name": binding,
-                "host": host_mem,
-                "device": device_mem,
+            numel = int(np.prod(shape))
+            dtype = _TRT_TO_TORCH_DTYPE.get(trt_dtype, _torch.float32)
+
+            gpu_buf = _torch.empty(numel, dtype=dtype, device="cuda")
+            cpu_buf = _torch.empty(numel, dtype=dtype).pin_memory()
+            self._bindings.append(gpu_buf.data_ptr())
+
+            is_input = self._engine.binding_is_input(binding)
+            self._io[binding] = {
+                "cpu": cpu_buf,
+                "gpu": gpu_buf,
                 "shape": shape,
+                "is_input": is_input,
                 "dtype": dtype,
             }
-            if self._engine.binding_is_input(binding):
-                self._inputs.append(entry)
+            if is_input:
+                self._input_name = binding
+            elif not self._output_name:
+                self._output_name = binding
+
+    # ------------------------------------------------------------------
+    # CUDA Graph capture
+    # ------------------------------------------------------------------
+
+    def _capture_cuda_graph(self) -> None:
+        """Capture H2D + TRT execute + D2H as a single replayable CUDA Graph.
+
+        Before each replay, write new input data to inp["cpu"] (pinned).
+        The graph replays the DMA + kernel sequence using whatever is currently
+        in those fixed memory addresses — correct and fast.
+        """
+        inp = self._io[self._input_name]
+        out = self._io[self._output_name]
+
+        use_v3 = hasattr(self._context, "execute_async_v3")
+
+        def _run_once() -> None:
+            with _torch.cuda.stream(self._stream):
+                inp["gpu"].copy_(inp["cpu"], non_blocking=True)
+                if use_v3:
+                    self._context.execute_async_v3(self._stream.cuda_stream)
+                else:
+                    self._context.execute_async_v2(
+                        bindings=self._bindings,
+                        stream_handle=self._stream.cuda_stream,
+                    )
+                out["cpu"].copy_(out["gpu"], non_blocking=True)
+            self._stream.synchronize()
+
+        # Warmup so all lazy TRT internal state is flushed before capture
+        for _ in range(3):
+            _run_once()
+
+        self._cuda_graph = _torch.cuda.CUDAGraph()
+        with _torch.cuda.graph(self._cuda_graph, stream=self._stream):
+            inp["gpu"].copy_(inp["cpu"], non_blocking=True)
+            if use_v3:
+                self._context.execute_async_v3(self._stream.cuda_stream)
             else:
-                self._outputs.append(entry)
+                self._context.execute_async_v2(
+                    bindings=self._bindings,
+                    stream_handle=self._stream.cuda_stream,
+                )
+            out["cpu"].copy_(out["gpu"], non_blocking=True)
+
+        self._graph_captured = True
 
     # ------------------------------------------------------------------
     # Public API
@@ -141,6 +244,14 @@ class TensorRTEngineModel:
         warmup_frame = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
         for _ in range(max(1, int(iterations))):
             self.detect(warmup_frame, min_confidence=0.0)
+
+        try:
+            self._capture_cuda_graph()
+            logger.info(
+                "TensorRT CUDA graph captured — zero-dispatch inference enabled"
+            )
+        except Exception as exc:
+            logger.warning("CUDA graph capture failed (%s); using direct execute", exc)
 
     def detect(
         self,
@@ -154,29 +265,38 @@ class TensorRTEngineModel:
         if frame is None:
             return EMPTY_DETECTION_PAYLOAD
 
-        # Preprocess: uint8 HWC → float32 NCHW (reuses allocated buffer)
+        # Preprocess: uint8 HWC → float32 NCHW (reuses scratch buffer)
         tensor = preprocess_image(frame, self.input_size, self._preprocess_buf)
         self._preprocess_buf = tensor
 
-        # Upload input — cast to engine's input dtype if needed (fp16 engines)
-        inp = self._inputs[0]
+        inp = self._io[self._input_name]
+        out = self._io[self._output_name]
+
+        # Write input into the pinned CPU buffer — pure CPU, not in graph
         flat = tensor.ravel()
-        if flat.dtype != inp["dtype"]:
-            flat = flat.astype(inp["dtype"], copy=False)
-        np.copyto(inp["host"], flat)
-        _cuda.memcpy_htod_async(inp["device"], inp["host"], self._stream)
+        if self._fp16_input:
+            flat = flat.astype(np.float16, copy=False)
+        np.copyto(inp["cpu"].numpy(), flat)
 
-        # Execute
-        self._execute()
+        if self._graph_captured and self._cuda_graph is not None:
+            # Replay: H2D → TRT kernels → D2H, with near-zero CPU overhead
+            self._cuda_graph.replay()
+            self._stream.synchronize()
+        else:
+            use_v3 = hasattr(self._context, "execute_async_v3")
+            with _torch.cuda.stream(self._stream):
+                inp["gpu"].copy_(inp["cpu"], non_blocking=True)
+                if use_v3:
+                    self._context.execute_async_v3(self._stream.cuda_stream)
+                else:
+                    self._context.execute_async_v2(
+                        bindings=self._bindings,
+                        stream_handle=self._stream.cuda_stream,
+                    )
+                out["cpu"].copy_(out["gpu"], non_blocking=True)
+            self._stream.synchronize()
 
-        # Download outputs
-        for out in self._outputs:
-            _cuda.memcpy_dtoh_async(out["host"], out["device"], self._stream)
-        self._stream.synchronize()
-
-        # Reshape output and postprocess
-        out = self._outputs[0]
-        raw_output = out["host"].reshape(out["shape"]).astype(np.float32, copy=False)
+        raw_output = out["cpu"].numpy().reshape(out["shape"]).astype(np.float32, copy=False)
 
         h = frame.shape[0] if hasattr(frame, "shape") else self.input_size
         w = frame.shape[1] if hasattr(frame, "shape") else self.input_size
@@ -212,27 +332,3 @@ class TensorRTEngineModel:
             confidences=confidences[keep_mask],
             class_ids=class_ids[keep_mask],
         )
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _execute(self) -> None:
-        use_v3 = hasattr(self._context, "execute_async_v3")
-        if use_v3:
-            for binding in self._inputs + self._outputs:
-                self._context.set_tensor_address(binding["name"], int(binding["device"]))
-            self._context.execute_async_v3(self._stream.handle)
-        else:
-            self._context.execute_async_v2(
-                bindings=self._bindings, stream_handle=self._stream.handle
-            )
-
-    def __del__(self) -> None:
-        if _cuda is None:
-            return
-        try:
-            for buf in self._inputs + self._outputs:
-                buf["device"].free()
-        except Exception:
-            pass

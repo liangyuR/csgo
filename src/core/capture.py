@@ -34,12 +34,20 @@ class ScreenCaptureBackend:
 
 
 class DXCamCaptureBackend(ScreenCaptureBackend):
-    """DXCam backend running in continuous mode.
+    """DXCam backend using continuous ROI capture.
 
-    DXCam's internal thread captures the full screen at up to target_fps.
-    grab() reads the latest buffered frame non-blocking and crops to the
-    requested region via a numpy slice — eliminating the per-call blocking
-    wait on the Desktop Duplication API that snapshot mode incurs.
+    On the first ``grab()`` call the camera is started in continuous mode
+    with the requested region passed directly to DXCam.  Subsequent calls
+    return the latest buffered frame via ``get_latest_frame()`` which never
+    blocks on the Desktop Duplication API.
+
+    If the region ever changes (e.g. detection size config update) the camera
+    is restarted automatically with the new region.
+
+    This is the optimal strategy when the detection window is fixed (i.e.
+    ``fov_follow_mouse=False``): DXCam's internal thread captures only the
+    ~640×640 ROI, keeping memory bandwidth minimal (~1.2 MB/frame vs ~24 MB
+    for full 4K), while the AI loop never blocks waiting for the next frame.
     """
 
     name = "dxcam"
@@ -52,68 +60,45 @@ class DXCamCaptureBackend(ScreenCaptureBackend):
         if self._camera is None:
             raise RuntimeError("dxcam.create returned no camera instance")
 
-        # Start continuous full-screen capture; video_mode=False means
-        # get_latest_frame() returns immediately even if no new frame arrived.
-        try:
-            self._camera.start(target_fps=240, video_mode=False)
-            self._continuous = True
-        except Exception as e:
-            logger.warning("DXCam continuous mode unavailable (%s), using snapshot mode", e)
-            self._continuous = False
+        self._active_ltrb: tuple[int, int, int, int] | None = None
 
-        self._last_full_frame: npt.NDArray[np.uint8] | None = None
+    def _start(self, ltrb: tuple[int, int, int, int]) -> None:
+        stop = getattr(self._camera, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                pass
+        self._camera.start(target_fps=240, video_mode=False, region=ltrb)
+        self._active_ltrb = ltrb
+        logger.debug("DXCam started with ROI %s", ltrb)
 
     def grab(self, region: CaptureRegion) -> npt.NDArray[np.uint8] | None:
-        if self._continuous:
-            full = self._camera.get_latest_frame()
-            if full is None:
-                full = self._last_full_frame
-            if full is None:
-                return None
-            self._last_full_frame = full
+        left = int(region["left"])
+        top = int(region["top"])
+        right = left + int(region["width"])
+        bottom = top + int(region["height"])
+        ltrb = (left, top, right, bottom)
 
-            left = int(region["left"])
-            top = int(region["top"])
-            right = left + int(region["width"])
-            bottom = top + int(region["height"])
+        if ltrb != self._active_ltrb:
+            self._start(ltrb)
 
-            h, w = full.shape[:2]
-            top = max(0, min(top, h))
-            bottom = max(top, min(bottom, h))
-            left = max(0, min(left, w))
-            right = max(left, min(right, w))
-
-            cropped = full[top:bottom, left:right]
-            if cropped.size == 0:
-                return None
-            if cropped.dtype != np.uint8:
-                cropped = cropped.astype(np.uint8, copy=False)
-            if not cropped.flags.c_contiguous:
-                return np.ascontiguousarray(cropped)
-            return cropped
-        else:
-            # Fallback: snapshot mode
-            left = int(region["left"])
-            top = int(region["top"])
-            right = left + int(region["width"])
-            bottom = top + int(region["height"])
-            frame = self._camera.grab(region=(left, top, right, bottom))
-            if frame is None:
-                return None
-            if frame.dtype != np.uint8:
-                frame = frame.astype(np.uint8, copy=False)
-            if not frame.flags.c_contiguous:
-                return np.ascontiguousarray(frame)
-            return frame
+        frame = self._camera.get_latest_frame()
+        if frame is None:
+            return None
+        if frame.dtype != np.uint8:
+            frame = frame.astype(np.uint8, copy=False)
+        if not frame.flags.c_contiguous:
+            frame = np.ascontiguousarray(frame)
+        return frame
 
     def close(self) -> None:
-        if self._continuous:
-            stop = getattr(self._camera, "stop", None)
-            if callable(stop):
-                try:
-                    stop()
-                except Exception:
-                    pass
+        stop = getattr(self._camera, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:
+                pass
         release = getattr(self._camera, "release", None)
         if callable(release):
             try:
