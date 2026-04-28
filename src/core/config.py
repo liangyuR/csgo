@@ -65,6 +65,21 @@ def migrate_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 migrated[kd_key] = float(migrated[kd_key]) * nominal_dt
         migrated["controller_version"] = 2
 
+    if controller_version < 3:
+        # Controller v2 used a hidden 3x boost on Kp values above 0.5 inside the
+        # PID. v3 removes that remap and applies Kp linearly. Bake the historical
+        # boost into the stored Kp so user-tuned setups keep their effective gain.
+        for axis in ("x", "y"):
+            kp_key = f"pid_kp_{axis}"
+            if kp_key in migrated:
+                try:
+                    raw_kp = float(migrated[kp_key])
+                except (TypeError, ValueError):
+                    continue
+                if raw_kp > 0.5:
+                    migrated[kp_key] = 0.5 + (raw_kp - 0.5) * 3.0
+        migrated["controller_version"] = 3
+
     return drop_legacy_config_keys(migrated)
 
 
@@ -101,7 +116,7 @@ class Config:
         self.fov_size: int = 222
         self.detect_range_size: int = default_model.input_size
         self.show_confidence: bool = True
-        self.min_confidence: float = 0.11
+        self.min_confidence: float = 0.30
         self.aim_part: str = "head"
         self.active_target_class: str = default_model.labels[0]
         self.sticky_target_enabled: bool = True
@@ -112,8 +127,8 @@ class Config:
         self.bezier_curve_steps: int = 4
 
         self.tracker_enabled: bool = True
-        self.prediction_lead_time_s: float = 0.018
-        self.velocity_ema_alpha: float = 0.45
+        self.prediction_lead_time_s: float = 0.024
+        self.velocity_ema_alpha: float = 0.6
         self.velocity_deadzone_px_per_s: float = 10.0
         self.screen_motion_compensation_enabled: bool = True
         self.screen_motion_compensation_ratio: float = 1.0
@@ -124,12 +139,15 @@ class Config:
         self.tracker_current_y: float = 0.0
         self.tracker_has_prediction: bool = False
 
-        self.controller_version: int = 2
+        self.controller_version: int = 3
         self.aim_position_deadzone_px: float = 1.0
         self.lock_retain_radius_px: float = 48.0
         self.lock_retain_time_s: float = 0.12
-        self.target_point_smoothing_alpha: float = 0.35
-        self.prediction_max_distance_px: float = 20.0
+        self.target_point_smoothing_alpha: float = 0.55
+        self.prediction_max_distance_px: float = 80.0
+        self.aim_pixel_ratio_x: float = 1.0
+        self.aim_pixel_ratio_y: float = 1.0
+        self.tracker_use_acceleration: bool = False
 
         self.disclaimer_agreed: bool = False
         self.first_run_complete: bool = False
@@ -140,10 +158,10 @@ class Config:
 
         self.pid_kp_x: float = 0.45
         self.pid_ki_x: float = 0.0
-        self.pid_kd_x: float = 0.0
+        self.pid_kd_x: float = 0.012
         self.pid_kp_y: float = 0.45
         self.pid_ki_y: float = 0.0
-        self.pid_kd_y: float = 0.0
+        self.pid_kd_y: float = 0.012
 
         self.mouse_move_method: str = "mouse_event"
         self.mouse_click_method: str = "mouse_event"
@@ -273,6 +291,9 @@ class Config:
             "lock_retain_time_s": self.lock_retain_time_s,
             "target_point_smoothing_alpha": self.target_point_smoothing_alpha,
             "prediction_max_distance_px": self.prediction_max_distance_px,
+            "aim_pixel_ratio_x": self.aim_pixel_ratio_x,
+            "aim_pixel_ratio_y": self.aim_pixel_ratio_y,
+            "tracker_use_acceleration": self.tracker_use_acceleration,
         }
 
     def from_dict(self, data: Dict[str, Any]) -> None:
@@ -427,24 +448,30 @@ def _validate_detect_range_size(config: Config, spec: ModelSpec | None = None) -
 
 
 def _validate_stability_settings(config: Config) -> None:
-    config.controller_version = max(2, int(getattr(config, "controller_version", 2) or 2))
+    config.controller_version = max(3, int(getattr(config, "controller_version", 3) or 3))
     config.aim_position_deadzone_px = _clamp(float(getattr(config, "aim_position_deadzone_px", 3.0)), 0.0, 20.0)
     config.lock_retain_radius_px = _clamp(float(getattr(config, "lock_retain_radius_px", 48.0)), 8.0, float(config.width))
     config.lock_retain_time_s = _clamp(float(getattr(config, "lock_retain_time_s", 0.12)), 0.0, 1.0)
-    config.target_point_smoothing_alpha = _clamp(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0, 1.0)
+    config.target_point_smoothing_alpha = _clamp(float(getattr(config, "target_point_smoothing_alpha", 0.55)), 0.0, 1.0)
     config.screen_motion_compensation_enabled = bool(getattr(config, "screen_motion_compensation_enabled", True))
-    config.prediction_lead_time_s = _clamp(float(getattr(config, "prediction_lead_time_s", 0.018)), 0.0, 0.1)
-    config.velocity_ema_alpha = _clamp(float(getattr(config, "velocity_ema_alpha", 0.45)), 0.0, 1.0)
+    config.prediction_lead_time_s = _clamp(float(getattr(config, "prediction_lead_time_s", 0.024)), 0.0, 0.1)
+    config.velocity_ema_alpha = _clamp(float(getattr(config, "velocity_ema_alpha", 0.6)), 0.0, 1.0)
     config.velocity_deadzone_px_per_s = _clamp(float(getattr(config, "velocity_deadzone_px_per_s", 10.0)), 0.0, 500.0)
     config.screen_motion_compensation_ratio = _clamp(
         float(getattr(config, "screen_motion_compensation_ratio", 1.0)),
         0.0,
         1.5,
     )
-    config.prediction_max_distance_px = _clamp(float(getattr(config, "prediction_max_distance_px", 20.0)), 0.0, 200.0)
+    config.prediction_max_distance_px = _clamp(float(getattr(config, "prediction_max_distance_px", 80.0)), 0.0, 400.0)
     config.control_loop_hz = _clamp(float(getattr(config, "control_loop_hz", 500.0)), 30.0, 1000.0)
     config.control_stale_hold_ms = _clamp(float(getattr(config, "control_stale_hold_ms", 12.0)), 0.0, 250.0)
     config.control_stale_decay_ms = _clamp(float(getattr(config, "control_stale_decay_ms", 24.0)), 0.0, 500.0)
+    config.aim_pixel_ratio_x = _clamp(float(getattr(config, "aim_pixel_ratio_x", 1.0)), 0.1, 10.0)
+    config.aim_pixel_ratio_y = _clamp(float(getattr(config, "aim_pixel_ratio_y", 1.0)), 0.1, 10.0)
+    config.tracker_use_acceleration = bool(getattr(config, "tracker_use_acceleration", False))
+    config.pid_kd_x = _clamp(float(getattr(config, "pid_kd_x", 0.012)), 0.0, 0.1)
+    config.pid_kd_y = _clamp(float(getattr(config, "pid_kd_y", 0.012)), 0.0, 0.1)
+    config.min_confidence = _clamp(float(getattr(config, "min_confidence", 0.30)), 0.05, 0.9)
 
 
 def _migrate_model_settings(config: Config) -> None:

@@ -149,7 +149,23 @@ class AimStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(migrated["velocity_deadzone_px_per_s"], 12.0)
         self.assertAlmostEqual(migrated["pid_ki_x"], 25.0)
         self.assertAlmostEqual(migrated["pid_kd_x"], 0.005)
-        self.assertEqual(migrated["controller_version"], 2)
+        self.assertEqual(migrated["controller_version"], 3)
+
+    def test_migrate_config_v3_bakes_old_pid_kp_boost_into_stored_kp(self) -> None:
+        # Controller v2 silently boosted Kp values above 0.5 by 3x inside the
+        # PID. v3 removes that remap; the migration must lift legacy Kp values
+        # so user-tuned setups keep their effective gain.
+        migrated = migrate_config_data(
+            {
+                "controller_version": 2,
+                "pid_kp_x": 1.0,
+                "pid_kp_y": 0.45,
+            }
+        )
+
+        self.assertAlmostEqual(migrated["pid_kp_x"], 2.0)
+        self.assertAlmostEqual(migrated["pid_kp_y"], 0.45)
+        self.assertEqual(migrated["controller_version"], 3)
 
     def test_apply_model_constraints_preserves_dynamic_tracking_defaults(self) -> None:
         from core.config import Config
@@ -159,11 +175,15 @@ class AimStabilityTests(unittest.TestCase):
         self.assertTrue(config.tracker_enabled)
         self.assertTrue(config.screen_motion_compensation_enabled)
         self.assertAlmostEqual(config.screen_motion_compensation_ratio, 1.0)
-        self.assertAlmostEqual(config.prediction_lead_time_s, 0.018)
-        self.assertAlmostEqual(config.velocity_ema_alpha, 0.45)
-        self.assertAlmostEqual(config.prediction_max_distance_px, 20.0)
+        self.assertAlmostEqual(config.prediction_lead_time_s, 0.024)
+        self.assertAlmostEqual(config.velocity_ema_alpha, 0.6)
+        self.assertAlmostEqual(config.prediction_max_distance_px, 80.0)
         self.assertAlmostEqual(config.control_stale_hold_ms, 12.0)
         self.assertAlmostEqual(config.control_stale_decay_ms, 24.0)
+        self.assertAlmostEqual(config.aim_pixel_ratio_x, 1.0)
+        self.assertAlmostEqual(config.aim_pixel_ratio_y, 1.0)
+        self.assertFalse(config.tracker_use_acceleration)
+        self.assertEqual(config.controller_version, 3)
 
     def test_runtime_refresh_token_helper_increments_monotonically(self) -> None:
         config = SimpleNamespace(runtime_refresh_token=0)
@@ -269,8 +289,10 @@ class AimStabilityTests(unittest.TestCase):
         state = ControlLoopState(cached_mouse_move_method="mouse_event")
         pid_x = PIDController(0.26, 0.0, 0.0)
         pid_y = PIDController(0.26, 0.0, 0.0)
+        # Box is sized realistically (>=8x8) so it survives the noise-floor area
+        # filter; geometry still places the crosshair inside the deadzone.
         payload = DetectionPayload(
-            boxes=[[100.0, 100.0, 102.0, 102.0]],
+            boxes=[[91.0, 91.0, 111.0, 111.0]],
             confidences=[0.9],
             class_ids=[0],
         )

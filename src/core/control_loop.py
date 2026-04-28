@@ -24,19 +24,20 @@ logger = logging.getLogger(__name__)
 
 Box = tuple[float, float, float, float]
 
-_ACQUIRE_MATCH_FRAMES = 3
+_ACQUIRE_MATCH_FRAMES = 4
 _ACQUIRE_WINDOW_S = 0.075
-_ACQUIRE_GAIN = 1.75
-_ACQUIRE_MIN_MOVE_PX = 3
-_ACQUIRE_OVERSHOOT_RATIO = 0.18
-_ACQUIRE_MAX_OVERSHOOT_PX = 6
-_TRACK_MIN_ALPHA = 0.45
-_ACQUIRE_MIN_ALPHA = 0.82
+_ACQUIRE_GAIN = 1.25
+_ACQUIRE_MIN_MOVE_PX = 2
+_ACQUIRE_OVERSHOOT_RATIO = 0.0
+_ACQUIRE_MAX_OVERSHOOT_PX = 0
+_TRACK_MIN_ALPHA = 0.65
+_ACQUIRE_MIN_ALPHA = 0.9
 _SETTLE_MIN_ALPHA = 0.58
 _SETTLE_DISTANCE_PX = 18.0
 _SETTLE_MIN_MOVE_PX = 1
 _SETTLE_MAX_MOVE_PX = 3
-_DYNAMIC_PREDICTION_MAX_DISTANCE_PX = 60.0
+_DYNAMIC_PREDICTION_MAX_DISTANCE_PX = 200.0
+_MIN_BOX_AREA_PX2 = 64.0
 _SPIN_GUARD_S = 0.002
 
 
@@ -70,6 +71,9 @@ class RuntimeControlSettings:
     enable_latency_stats: bool
     latency_stats_interval: float
     latency_stats_alpha: float
+    aim_pixel_ratio_x: float
+    aim_pixel_ratio_y: float
+    tracker_use_acceleration: bool
 
 
 @dataclass
@@ -107,6 +111,9 @@ class ControlLoopState:
     last_crosshair_y: int | None = None
     last_target_screen_x: float | None = None
     last_target_screen_y: float | None = None
+    last_candidate_x: float | None = None
+    last_candidate_y: float | None = None
+    last_candidate_perf: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -149,6 +156,9 @@ def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
         enable_latency_stats=bool(getattr(config, "enable_latency_stats", False)),
         latency_stats_interval=max(float(getattr(config, "latency_stats_interval", 1.0)), 0.1),
         latency_stats_alpha=min(max(float(getattr(config, "latency_stats_alpha", 0.2)), 0.01), 1.0),
+        aim_pixel_ratio_x=min(max(float(getattr(config, "aim_pixel_ratio_x", 1.0) or 1.0), 0.1), 10.0),
+        aim_pixel_ratio_y=min(max(float(getattr(config, "aim_pixel_ratio_y", 1.0) or 1.0), 0.1), 10.0),
+        tracker_use_acceleration=bool(getattr(config, "tracker_use_acceleration", False)),
     )
 
 
@@ -362,12 +372,21 @@ def _reset_control_state(
         _clear_lock_state(state)
 
 
+def _box_area(box: Box) -> float:
+    width = max(0.0, box[2] - box[0])
+    height = max(0.0, box[3] - box[1])
+    return width * height
+
+
 def _candidate_for_box(box, confidence: float, crosshair_x: int, crosshair_y: int) -> tuple[float, float, float, float, Box]:
     box_tuple = _box_to_tuple(box)
     center_x, center_y = _box_center(box_tuple)
     distance_sq = _distance_sq(center_x, center_y, crosshair_x, crosshair_y)
     confidence_weight = max(float(confidence), 0.25)
-    weighted_distance_sq = distance_sq / confidence_weight
+    area = max(_box_area(box_tuple), 1.0)
+    # Penalize unrealistically small detections, which are usually noise.
+    area_weight = math.sqrt(area)
+    weighted_distance_sq = distance_sq / (confidence_weight * area_weight)
     return weighted_distance_sq, distance_sq, center_x, center_y, box_tuple
 
 
@@ -406,6 +425,9 @@ def _select_target(
         candidate = _candidate_for_box(box, confidence, crosshair_x, crosshair_y)
         score, distance_sq, center_x, center_y, box_tuple = candidate
 
+        if _box_area(box_tuple) < _MIN_BOX_AREA_PX2:
+            continue
+
         if nearest_candidate is None or score < nearest_candidate[0]:
             nearest_candidate = candidate
 
@@ -427,6 +449,30 @@ def _select_target(
 
     if selected is None and not hold_lock:
         selected = nearest_candidate
+
+    # First-lock consistency gate: if the very first candidate moved farther than
+    # twice the lock-retain radius from where we last saw "the nearest target",
+    # treat it as detector jitter and refuse to lock this frame. We require the
+    # previous nearest sighting to still be fresh (within lock_retain_time_s).
+    if (
+        selected is not None
+        and previous_box is None
+        and state.last_candidate_x is not None
+        and state.last_candidate_y is not None
+        and (current_time - state.last_candidate_perf) <= lock_retain_time_s
+    ):
+        cand_x, cand_y = selected[2], selected[3]
+        consistency_radius_sq = (lock_retain_radius_px * 2.0) ** 2
+        if _distance_sq(cand_x, cand_y, state.last_candidate_x, state.last_candidate_y) > consistency_radius_sq:
+            state.last_candidate_x = cand_x
+            state.last_candidate_y = cand_y
+            state.last_candidate_perf = current_time
+            return None, None, None, False, False
+
+    if nearest_candidate is not None:
+        state.last_candidate_x = nearest_candidate[2]
+        state.last_candidate_y = nearest_candidate[3]
+        state.last_candidate_perf = current_time
 
     if selected is None:
         if not hold_lock:
@@ -483,6 +529,7 @@ def _update_tracker_targets(
     crosshair_x: int,
     crosshair_y: int,
     detection_dt: float,
+    target_age_s: float = 0.0,
 ) -> tuple[float, float, bool]:
     predicted_x = target_x
     predicted_y = target_y
@@ -538,16 +585,18 @@ def _update_tracker_targets(
     config.tracker_current_x = target_x
     config.tracker_current_y = target_y
 
+    effective_lead_s = settings.prediction_lead_time_s + max(float(target_age_s), 0.0)
     speed = state.smart_tracker.get_speed()
     if state.lock_match_frames >= 2 and speed >= settings.velocity_deadzone_px_per_s:
         prediction_max_distance = _resolve_prediction_max_distance(
             settings,
             speed,
-            settings.prediction_lead_time_s,
+            effective_lead_s,
         )
         predicted_x, predicted_y = state.smart_tracker.get_predicted_position(
-            settings.prediction_lead_time_s,
+            effective_lead_s,
             prediction_max_distance,
+            use_acceleration=settings.tracker_use_acceleration,
         )
         config.tracker_predicted_x = predicted_x
         config.tracker_predicted_y = predicted_y
@@ -576,6 +625,7 @@ def _refresh_dynamic_control_target(
     predicted_x, predicted_y = state.smart_tracker.get_predicted_position(
         prediction_time_s,
         prediction_max_distance,
+        use_acceleration=settings.tracker_use_acceleration,
     )
     state.control_target_x = predicted_x
     state.control_target_y = predicted_y
@@ -638,6 +688,7 @@ def _consume_detection_frame(
 
     state.applied_mouse_dx = 0.0
     state.applied_mouse_dy = 0.0
+    target_age_s = max(current_perf - frame_perf, 0.0)
     control_target_x, control_target_y, tracker_active = _update_tracker_targets(
         config,
         state,
@@ -647,6 +698,7 @@ def _consume_detection_frame(
         frame.crosshair_x,
         frame.crosshair_y,
         detection_dt,
+        target_age_s=target_age_s,
     )
     state.measured_target_x = target_x
     state.measured_target_y = target_y
@@ -739,9 +791,14 @@ def _apply_control_output(
     move_x = _clamp_move_to_stage_limit(move_x, final_error_x, control_stage)
     move_y = _clamp_move_to_stage_limit(move_y, final_error_y, control_stage)
     if move_x != 0 or move_y != 0:
-        send_mouse_move(move_x, move_y, method=mouse_method)
-        state.applied_mouse_dx += move_x
-        state.applied_mouse_dy += move_y
+        ratio_x = settings.aim_pixel_ratio_x if settings.aim_pixel_ratio_x > 0.0 else 1.0
+        ratio_y = settings.aim_pixel_ratio_y if settings.aim_pixel_ratio_y > 0.0 else 1.0
+        mouse_dx = int(round(move_x / ratio_x)) if move_x != 0 else 0
+        mouse_dy = int(round(move_y / ratio_y)) if move_y != 0 else 0
+        if mouse_dx != 0 or mouse_dy != 0:
+            send_mouse_move(mouse_dx, mouse_dy, method=mouse_method)
+        state.applied_mouse_dx += mouse_dx * ratio_x
+        state.applied_mouse_dy += mouse_dy * ratio_y
     return phase, target_age_ms
 
 

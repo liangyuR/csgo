@@ -12,7 +12,11 @@ _PIXEL_SCALE = np.float32(1.0 / 255.0)
 
 
 class PIDController:
-    """Time-aware PID controller with conservative internal damping."""
+    """Time-aware PID controller with conservative internal damping.
+
+    The output is linear in ``Kp``: there is no hidden gain remapping. Callers
+    should scale ``Kp`` directly when changing controller aggressiveness.
+    """
 
     def __init__(
         self,
@@ -49,9 +53,8 @@ class PIDController:
         alpha = self.derivative_alpha
         self.filtered_derivative = ((1.0 - alpha) * self.filtered_derivative) + (alpha * raw_derivative)
 
-        adjusted_kp = self._calculate_adjusted_kp(self.Kp)
         output = (
-            (adjusted_kp * error)
+            (self.Kp * error)
             + (self.Ki * self.integral)
             + (self.Kd * self.filtered_derivative)
         )
@@ -59,11 +62,6 @@ class PIDController:
         self.previous_error = error
         self.has_previous_error = True
         return output
-
-    def _calculate_adjusted_kp(self, kp: float) -> float:
-        if kp <= 0.5:
-            return kp
-        return 0.5 + (kp - 0.5) * 3.0
 
 
 def preprocess_image(

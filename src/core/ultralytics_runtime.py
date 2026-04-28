@@ -75,12 +75,32 @@ class UltralyticsEngineModel:
 
         if fov_bounds is not None:
             fov_left, fov_top, fov_right, fov_bottom = fov_bounds
-            keep_mask &= (
-                (xyxy[:, 0] + offset_x < fov_right)
-                & (xyxy[:, 2] + offset_x > fov_left)
-                & (xyxy[:, 1] + offset_y < fov_bottom)
-                & (xyxy[:, 3] + offset_y > fov_top)
+            box_left = xyxy[:, 0] + offset_x
+            box_top = xyxy[:, 1] + offset_y
+            box_right = xyxy[:, 2] + offset_x
+            box_bottom = xyxy[:, 3] + offset_y
+
+            intersect_w = np.maximum(0.0, np.minimum(box_right, fov_right) - np.maximum(box_left, fov_left))
+            intersect_h = np.maximum(0.0, np.minimum(box_bottom, fov_bottom) - np.maximum(box_top, fov_top))
+            intersect_area = intersect_w * intersect_h
+            box_area = np.maximum(0.0, (box_right - box_left) * (box_bottom - box_top))
+            coverage = np.divide(
+                intersect_area,
+                box_area,
+                out=np.zeros_like(box_area, dtype=np.float32),
+                where=box_area > 0.0,
             )
+
+            box_center_x = (box_left + box_right) * 0.5
+            box_center_y = (box_top + box_bottom) * 0.5
+            center_inside = (
+                (box_center_x >= fov_left)
+                & (box_center_x <= fov_right)
+                & (box_center_y >= fov_top)
+                & (box_center_y <= fov_bottom)
+            )
+
+            keep_mask &= center_inside | (coverage >= 0.5)
 
         if not np.any(keep_mask):
             return EMPTY_DETECTION_PAYLOAD

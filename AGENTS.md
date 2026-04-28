@@ -6,6 +6,7 @@
 - Primary entrypoint: `src/main.py`
 - Current branch at initialization: `codex/sup-tensorRT`
 - Shell environment: PowerShell on Windows
+- Bundled Python executable: `C:\Users\11601\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`
 
 ## Current State
 
@@ -29,6 +30,7 @@
 
 - Tests live under `tests/`.
 - Existing TensorRT-focused coverage includes `tests/test_tensorrt_runtime.py`.
+- Use the bundled Python path for unittest commands, for example: `& "C:\Users\11601\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m unittest tests.test_pid_no_hidden_gain tests.test_control_pixel_ratio`
 - Be careful with commands that may require GPU, CUDA, TensorRT, or Windows-specific runtime dependencies.
 
 ## Notes

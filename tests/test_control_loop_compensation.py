@@ -113,7 +113,10 @@ class ControlLoopCompensationTests(unittest.TestCase):
         run_control_step(config, state, pid_x, pid_y, frame, 1.006, 1.006, 0.002)
 
         x_moves = [dx for dx, _, _ in _moves]
-        self.assertEqual(x_moves, [16, 2, 1, 1])
+        # Linear PID with the acquire-stage gain (1.25x) and clamp-to-error
+        # produces a monotonically converging sequence whose total movement
+        # never overshoots the 20px error.
+        self.assertEqual(x_moves, [11, 4, 2, 1])
         self.assertLessEqual(sum(x_moves), 20)
 
     def test_single_tick_output_is_clamped_to_current_error(self) -> None:
@@ -130,7 +133,31 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
 
-        self.assertEqual(_moves, [(24, 0, "mouse_event")])
+        # Acquire stage no longer permits overshoot, so the issued mouse delta
+        # is clamped to the exact remaining error (20px).
+        self.assertEqual(_moves, [(20, 0, "mouse_event")])
+
+    def test_aim_pixel_ratio_scales_mouse_output_inversely(self) -> None:
+        # With a 2:1 ratio (1 mouse count -> 2 screen pixels), the system should
+        # only issue half as many mouse counts to cover the same screen-pixel
+        # error.
+        config = self._make_config(aim_pixel_ratio_x=2.0, aim_pixel_ratio_y=2.0)
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(1.0, 0.0, 0.0)
+        pid_y = PIDController(1.0, 0.0, 0.0)
+        payload = DetectionPayload(
+            boxes=[[110.0, 90.0, 130.0, 110.0]],
+            confidences=[0.9],
+            class_ids=[0],
+        )
+        frame = self._make_frame(7, 100, 100, payload)
+
+        run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
+
+        self.assertEqual(_moves, [(10, 0, "mouse_event")])
+        # Accumulated state is recorded in screen pixels so the next-tick error
+        # bookkeeping stays consistent regardless of the configured ratio.
+        self.assertAlmostEqual(state.applied_mouse_dx, 20.0)
 
     def test_control_tick_interval_follows_detection_rate_under_configured_ceiling(self) -> None:
         config = self._make_config(control_loop_hz=500.0, detect_interval=0.01)
@@ -185,8 +212,10 @@ class ControlLoopCompensationTests(unittest.TestCase):
         state = ControlLoopState(cached_mouse_move_method="mouse_event")
         pid_x = PIDController(0.1, 0.0, 0.0)
         pid_y = PIDController(0.1, 0.0, 0.0)
+        # Larger box (>=8x8 area) survives the noise-floor filter; geometry
+        # still yields a 2/1 px error to test the settle-stage min-step boost.
         payload = DetectionPayload(
-            boxes=[[101.0, 100.0, 103.0, 102.0]],
+            boxes=[[92.0, 91.0, 112.0, 111.0]],
             confidences=[0.9],
             class_ids=[0],
         )
@@ -496,7 +525,9 @@ class ControlLoopCompensationTests(unittest.TestCase):
         prediction_delta = state.control_target_x - state.measured_target_x
         self.assertTrue(state.tracker_active)
         self.assertGreater(prediction_delta, config.prediction_max_distance_px)
-        self.assertLessEqual(prediction_delta, 60.0)
+        # The dynamic cap was raised to 200px so fast targets stop being
+        # artificially capped at the much smaller static prediction limit.
+        self.assertLessEqual(prediction_delta, 200.0)
 
     def test_combined_self_motion_and_target_motion_keeps_relative_velocity(self) -> None:
         config = self._make_config(
