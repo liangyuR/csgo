@@ -14,7 +14,7 @@ if SRC_DIR not in sys.path:
 _moves: list[tuple[int, int, str]] = []
 
 
-def _record_move(dx: int, dy: int, method: str = "mouse_event") -> None:
+def _record_move(dx: int, dy: int, method: str = "ddxoft") -> None:
     _moves.append((dx, dy, method))
 
 
@@ -22,7 +22,7 @@ fake_win_utils = types.ModuleType("win_utils")
 fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_move = _record_move
-fake_win_utils.send_mouse_click = lambda method="mouse_event": None
+fake_win_utils.send_mouse_click = lambda method="ddxoft": None
 fake_key_utils = types.ModuleType("win_utils.key_utils")
 fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
 fake_win_utils.key_utils = fake_key_utils
@@ -72,7 +72,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             "tracker_predicted_x": 0.0,
             "tracker_predicted_y": 0.0,
             "tracker_has_prediction": False,
-            "mouse_move_method": "mouse_event",
+            "mouse_move_method": "ddxoft",
             "detect_interval": 0.02,
             "control_stale_hold_ms": 12.0,
             "control_stale_decay_ms": 24.0,
@@ -99,7 +99,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
     def test_repeated_ticks_on_same_detection_frame_do_not_reapply_full_error(self) -> None:
         config = self._make_config()
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.45, 0.0, 0.0)
         pid_y = PIDController(0.45, 0.0, 0.0)
         payload = DetectionPayload(
@@ -123,7 +123,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
     def test_single_tick_output_is_clamped_to_current_error(self) -> None:
         config = self._make_config()
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(1.0, 0.0, 0.0)
         pid_y = PIDController(1.0, 0.0, 0.0)
         payload = DetectionPayload(
@@ -137,14 +137,14 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         # Acquire stage no longer permits overshoot, so the issued mouse delta
         # is clamped to the exact remaining error (20px).
-        self.assertEqual(_moves, [(20, 0, "mouse_event")])
+        self.assertEqual(_moves, [(20, 0, "ddxoft")])
 
     def test_aim_pixel_ratio_scales_mouse_output_inversely(self) -> None:
         # With a 2:1 ratio (1 mouse count -> 2 screen pixels), the system should
         # only issue half as many mouse counts to cover the same screen-pixel
         # error.
         config = self._make_config(aim_pixel_ratio_x=2.0, aim_pixel_ratio_y=2.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(1.0, 0.0, 0.0)
         pid_y = PIDController(1.0, 0.0, 0.0)
         payload = DetectionPayload(
@@ -156,7 +156,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
 
-        self.assertEqual(_moves, [(10, 0, "mouse_event")])
+        self.assertEqual(_moves, [(10, 0, "ddxoft")])
         # Accumulated state is recorded in screen pixels so the next-tick error
         # bookkeeping stays consistent regardless of the configured ratio.
         self.assertAlmostEqual(state.applied_mouse_dx, 20.0)
@@ -191,7 +191,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         _moves.clear()
         track_state = ControlLoopState(
-            cached_mouse_move_method="mouse_event",
+            cached_mouse_move_method="ddxoft",
             target_locked=True,
             locked_box=(110.0, 90.0, 130.0, 110.0),
             lock_acquired_time=0.7,
@@ -211,7 +211,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
     def test_settle_stage_keeps_advancing_small_error(self) -> None:
         config = self._make_config(target_point_smoothing_alpha=0.35)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.1, 0.0, 0.0)
         pid_y = PIDController(0.1, 0.0, 0.0)
         # Larger box (>=8x8 area) survives the noise-floor filter; geometry
@@ -227,7 +227,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         self.assertEqual(result.phase, "fresh")
         self.assertEqual(state.control_stage, "settle")
-        self.assertEqual(_moves[-1], (1, 1, "mouse_event"))
+        self.assertEqual(_moves[-1], (1, 1, "ddxoft"))
 
     def test_stage_smoothing_alpha_is_more_aggressive_on_acquire_than_track(self) -> None:
         config = self._make_config(target_point_smoothing_alpha=0.35)
@@ -401,7 +401,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
     def test_self_motion_is_removed_from_tracker_velocity(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
 
@@ -431,7 +431,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             velocity_deadzone_px_per_s=0.0,
             prediction_lead_time_s=0.02,
         )
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
         frames = [
@@ -468,7 +468,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             velocity_deadzone_px_per_s=0.0,
             prediction_lead_time_s=0.02,
         )
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
         frames = [
@@ -512,7 +512,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
                 prediction_lead_time_s=0.02,
                 prediction_max_distance_px=80.0,
             )
-            state = ControlLoopState(cached_mouse_move_method="mouse_event")
+            state = ControlLoopState(cached_mouse_move_method="ddxoft")
             pid_x = PIDController(0.2, 0.0, 0.0)
             pid_y = PIDController(0.2, 0.0, 0.0)
             frames = [
@@ -566,7 +566,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             velocity_deadzone_px_per_s=0.0,
             prediction_lead_time_s=0.02,
         )
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
 
@@ -629,7 +629,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             prediction_lead_time_s=0.02,
             prediction_max_distance_px=20.0,
         )
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
         frames = [
@@ -669,7 +669,7 @@ class ControlLoopCompensationTests(unittest.TestCase):
             aim_position_deadzone_px=0.0,
             velocity_deadzone_px_per_s=0.0,
         )
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
 

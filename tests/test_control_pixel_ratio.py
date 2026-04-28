@@ -18,7 +18,7 @@ if SRC_DIR not in sys.path:
 _moves: list[tuple[int, int, str]] = []
 
 
-def _record_move(dx: int, dy: int, method: str = "mouse_event") -> None:
+def _record_move(dx: int, dy: int, method: str = "ddxoft") -> None:
     _moves.append((dx, dy, method))
 
 
@@ -26,7 +26,7 @@ fake_win_utils = types.ModuleType("win_utils")
 fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_move = _record_move
-fake_win_utils.send_mouse_click = lambda method="mouse_event": None
+fake_win_utils.send_mouse_click = lambda method="ddxoft": None
 fake_key_utils = types.ModuleType("win_utils.key_utils")
 fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
 fake_win_utils.key_utils = fake_key_utils
@@ -65,7 +65,7 @@ def _make_config(**overrides):
         "tracker_predicted_x": 0.0,
         "tracker_predicted_y": 0.0,
         "tracker_has_prediction": False,
-        "mouse_move_method": "mouse_event",
+        "mouse_move_method": "ddxoft",
         "detect_interval": 0.02,
         "control_stale_hold_ms": 12.0,
         "control_stale_decay_ms": 24.0,
@@ -98,7 +98,7 @@ class AimPixelRatioTests(unittest.TestCase):
         ``Kp`` and the 1.25x acquire gain, the issued mouse delta is clamped
         to the exact remaining error (the box-center offset)."""
         config = _make_config()
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(2.0, 0.0, 0.0)
         pid_y = PIDController(2.0, 0.0, 0.0)
         payload = DetectionPayload(
@@ -110,13 +110,13 @@ class AimPixelRatioTests(unittest.TestCase):
 
         run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
 
-        self.assertEqual(_moves, [(20, 0, "mouse_event")])
+        self.assertEqual(_moves, [(20, 0, "ddxoft")])
 
     def test_pixel_ratio_below_one_amplifies_mouse_output(self) -> None:
         """A 0.5 ratio means 1 mouse count -> 0.5 screen pixels. We therefore
         need 2x more mouse counts to cover the same screen-pixel error."""
         config = _make_config(aim_pixel_ratio_x=0.5, aim_pixel_ratio_y=0.5)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.5, 0.0, 0.0)
         pid_y = PIDController(0.5, 0.0, 0.0)
         payload = DetectionPayload(
@@ -131,12 +131,12 @@ class AimPixelRatioTests(unittest.TestCase):
         # acquire output in screen px = round(0.5 * 20 * 1.25) = round(12.5)
         # = 12 (Python 3 banker's rounding). Clamped to remaining 20.
         # Mouse counts = 12 / 0.5 = 24.
-        self.assertEqual(_moves, [(24, 0, "mouse_event")])
+        self.assertEqual(_moves, [(24, 0, "ddxoft")])
         self.assertAlmostEqual(state.applied_mouse_dx, 12.0)
 
     def test_pixel_ratio_above_one_attenuates_mouse_output(self) -> None:
         config = _make_config(aim_pixel_ratio_x=2.0, aim_pixel_ratio_y=2.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.5, 0.0, 0.0)
         pid_y = PIDController(0.5, 0.0, 0.0)
         payload = DetectionPayload(
@@ -150,7 +150,7 @@ class AimPixelRatioTests(unittest.TestCase):
 
         # screen-pixel output = 12 (see above). mouse counts = 12 / 2.0 = 6.
         # applied_mouse_dx is recorded in screen pixels: 6 * 2.0 = 12.
-        self.assertEqual(_moves, [(6, 0, "mouse_event")])
+        self.assertEqual(_moves, [(6, 0, "ddxoft")])
         self.assertAlmostEqual(state.applied_mouse_dx, 12.0)
 
     def test_extreme_ratio_does_not_explode_mouse_counts(self) -> None:
@@ -158,7 +158,7 @@ class AimPixelRatioTests(unittest.TestCase):
         than screen pixels of error. This documents the boundary behaviour
         end-to-end."""
         config = _make_config(aim_pixel_ratio_x=0.1, aim_pixel_ratio_y=0.1)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.5, 0.0, 0.0)
         pid_y = PIDController(0.5, 0.0, 0.0)
         payload = DetectionPayload(
@@ -171,7 +171,7 @@ class AimPixelRatioTests(unittest.TestCase):
         run_control_step(config, state, pid_x, pid_y, frame, 1.0, 1.0, 0.02)
 
         # screen-pixel output = 12. mouse counts = 12 / 0.1 = 120.
-        self.assertEqual(_moves, [(120, 0, "mouse_event")])
+        self.assertEqual(_moves, [(120, 0, "ddxoft")])
 
 
 if __name__ == "__main__":

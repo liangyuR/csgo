@@ -163,13 +163,8 @@ class Config:
         self.pid_ki_y: float = 0.0
         self.pid_kd_y: float = 0.012
 
-        self.mouse_move_method: str = "mouse_event"
-        self.mouse_click_method: str = "mouse_event"
-        self.arduino_com_port: str = ""
-
-        self.xbox_sensitivity: float = 1.0
-        self.xbox_deadzone: float = 0.05
-        self.xbox_auto_connect: bool = True
+        self.mouse_move_method: str = "ddxoft"
+        self.mouse_click_method: str = "ddxoft"
 
         self.detect_interval: float = 0.005
         self.idle_detect_interval: float = 0.05
@@ -264,10 +259,6 @@ class Config:
             "latency_stats_alpha": self.latency_stats_alpha,
             "mouse_move_method": self.mouse_move_method,
             "mouse_click_method": self.mouse_click_method,
-            "arduino_com_port": self.arduino_com_port,
-            "xbox_sensitivity": self.xbox_sensitivity,
-            "xbox_deadzone": self.xbox_deadzone,
-            "xbox_auto_connect": self.xbox_auto_connect,
             "show_console": self.show_console,
             "bezier_curve_enabled": self.bezier_curve_enabled,
             "bezier_curve_strength": self.bezier_curve_strength,
@@ -376,11 +367,8 @@ def _validate_idle_detect_interval(config: Config) -> None:
 
 
 def _validate_mouse_method(config: Config) -> None:
-    if config.mouse_move_method == "hardware":
-        config.mouse_move_method = "mouse_event"
-
-    if config.mouse_move_method == "ddxoft" and config.mouse_click_method != "mouse_event":
-        config.mouse_click_method = "mouse_event"
+    config.mouse_move_method = "ddxoft"
+    config.mouse_click_method = "ddxoft"
 
 
 def _validate_capture_backend(config: Config) -> None:

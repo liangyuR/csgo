@@ -15,7 +15,7 @@ if SRC_DIR not in sys.path:
 _clicks: list[str] = []
 
 
-def _record_click(method: str = "mouse_event") -> None:
+def _record_click(method: str = "ddxoft") -> None:
     _clicks.append(method)
 
 
@@ -23,7 +23,7 @@ fake_win_utils = types.ModuleType("win_utils")
 fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_click = _record_click
-fake_win_utils.send_mouse_move = lambda dx, dy, method="mouse_event": None
+fake_win_utils.send_mouse_move = lambda dx, dy, method="ddxoft": None
 fake_key_utils = types.ModuleType("win_utils.key_utils")
 fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
 fake_win_utils.key_utils = fake_key_utils
@@ -48,7 +48,7 @@ class AutoFireTests(unittest.TestCase):
             "auto_fire_interval": 0.0,
             "crosshairX": 100,
             "crosshairY": 100,
-            "mouse_click_method": "mouse_event",
+            "mouse_click_method": "ddxoft",
         }
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -69,7 +69,7 @@ class AutoFireTests(unittest.TestCase):
         fired = _run_auto_fire_step(config, boxes_queue, state, 1.002, click_func=_record_click)
 
         self.assertTrue(fired)
-        self.assertEqual(_clicks, ["mouse_event"])
+        self.assertEqual(_clicks, ["ddxoft"])
         self.assertTrue(boxes_queue.empty())
 
     def test_auto_fire_rejects_stale_payload(self) -> None:
@@ -95,7 +95,7 @@ class AutoFireTests(unittest.TestCase):
 
         self.assertTrue(first)
         self.assertTrue(second)
-        self.assertEqual(_clicks, ["mouse_event", "mouse_event"])
+        self.assertEqual(_clicks, ["ddxoft", "ddxoft"])
 
     def test_auto_fire_interval_still_limits_repeat_fire(self) -> None:
         config = self._make_config(auto_fire_interval=0.08)
@@ -109,7 +109,7 @@ class AutoFireTests(unittest.TestCase):
 
         self.assertTrue(first)
         self.assertFalse(second)
-        self.assertEqual(_clicks, ["mouse_event"])
+        self.assertEqual(_clicks, ["ddxoft"])
 
 
 if __name__ == "__main__":

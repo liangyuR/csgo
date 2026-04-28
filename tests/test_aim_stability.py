@@ -17,7 +17,7 @@ _moves: list[tuple[int, int, str]] = []
 _PIXEL_SCALE = np.float32(1.0 / 255.0)
 
 
-def _record_move(dx: int, dy: int, method: str = "mouse_event") -> None:
+def _record_move(dx: int, dy: int, method: str = "ddxoft") -> None:
     _moves.append((dx, dy, method))
 
 
@@ -38,7 +38,7 @@ fake_win_utils = types.ModuleType("win_utils")
 fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_move = _record_move
-fake_win_utils.send_mouse_click = lambda method="mouse_event": None
+fake_win_utils.send_mouse_click = lambda method="ddxoft": None
 fake_key_utils = types.ModuleType("win_utils.key_utils")
 fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
 fake_win_utils.key_utils = fake_key_utils
@@ -90,7 +90,7 @@ class AimStabilityTests(unittest.TestCase):
             "tracker_predicted_x": 0.0,
             "tracker_predicted_y": 0.0,
             "tracker_has_prediction": False,
-            "mouse_move_method": "mouse_event",
+            "mouse_move_method": "ddxoft",
             "detect_interval": 0.02,
             "control_stale_hold_ms": 12.0,
             "control_stale_decay_ms": 24.0,
@@ -295,7 +295,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_respects_position_deadzone(self) -> None:
         config = self._make_config()
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.26, 0.0, 0.0)
         pid_y = PIDController(0.26, 0.0, 0.0)
         # Box is sized realistically (>=8x8) so it survives the noise-floor area
@@ -323,7 +323,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_does_not_reprocess_same_sequence(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
         payload = DetectionPayload(
@@ -346,7 +346,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_target_age_uses_capture_timestamp(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.2, 0.0, 0.0)
         pid_y = PIDController(0.2, 0.0, 0.0)
         payload = DetectionPayload(
@@ -372,7 +372,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_transitions_from_hold_to_decay_to_idle(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.3, 0.0, 0.0)
         pid_y = PIDController(0.3, 0.0, 0.0)
         payload = DetectionPayload(
@@ -395,7 +395,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_keeps_hold_phase_on_temporary_miss_frame(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.3, 0.0, 0.0)
         pid_y = PIDController(0.3, 0.0, 0.0)
         target_payload = DetectionPayload(
@@ -416,7 +416,7 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_control_step_resets_immediately_when_aiming_disabled(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
-        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        state = ControlLoopState(cached_mouse_move_method="ddxoft")
         pid_x = PIDController(0.3, 0.0, 0.0)
         pid_y = PIDController(0.3, 0.0, 0.0)
         payload = DetectionPayload(

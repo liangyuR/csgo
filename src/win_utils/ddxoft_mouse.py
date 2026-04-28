@@ -5,7 +5,6 @@ import ctypes
 import time
 
 from .admin import ensure_admin_for_feature
-from .mouse_move import send_mouse_move_mouse_event
 
 
 class DDXoftMouse:
@@ -225,21 +224,14 @@ _ddxoft_move_count = 0
 
 
 def send_mouse_move_ddxoft(dx, dy):
-    """ddxoft 移動（最隱蔽）"""
+    """ddxoft 移動"""
     global _ddxoft_move_count
 
     if not ddxoft_mouse.ensure_initialized():
-        send_mouse_move_mouse_event(dx, dy)
         return
 
     _ddxoft_move_count += 1
-    
-    # 嘗試使用 ddxoft
-    if ddxoft_mouse.move_relative(dx, dy):
-        return  # 成功，直接返回
-    
-    # ddxoft 失敗時靜默回退到 mouse_event
-    send_mouse_move_mouse_event(dx, dy)
+    ddxoft_mouse.move_relative(dx, dy)
 
 
 # ===== 公共接口函數 =====

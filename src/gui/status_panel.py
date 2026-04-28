@@ -649,7 +649,7 @@ class StatusPanel(QWidget):
         from core.model_registry import get_model_spec
 
         model_spec = get_model_spec(getattr(self.config, 'model_id', ''))
-        model_name = model_spec.display_name if model_spec else (os.path.basename(current_model) if current_model else "None")
+        model_name = model_spec.display_name if model_spec else (os.path.basename(current_model) if current_model else get_text("key_none", "None"))
         if len(model_name) > 25: model_name = model_name[:22] + "..."
         self.model_row.label.setText(get_text('status_panel_current_model'))
         self.model_row.set_value(model_name)
@@ -663,29 +663,16 @@ class StatusPanel(QWidget):
         
         # DDXoft check
         method_color = None
-        if current_method == 'ddxoft':
-            try:
-                from win_utils import ddxoft_mouse
-                if ddxoft_mouse.is_available():
-                    disp_method += " ✓"
-                    method_color = NativeColors.to_css_rgba(NativeColors.SUCCESS)
-                else:
-                    disp_method += " ✗"
-                    method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
-            except ImportError:
-                 pass
-        elif current_method == 'xbox':
-            try:
-                from win_utils import is_xbox_connected
-                if is_xbox_connected():
-                    disp_method += " ✓"
-                    method_color = NativeColors.to_css_rgba(NativeColors.SUCCESS)
-                else:
-                    disp_method += " ✗"
-                    method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
-            except ImportError:
+        try:
+            from win_utils import ddxoft_mouse
+            if ddxoft_mouse.is_available():
+                disp_method += " ✓"
+                method_color = NativeColors.to_css_rgba(NativeColors.SUCCESS)
+            else:
                 disp_method += " ✗"
                 method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
+        except ImportError:
+            pass
         
         self.mouse_row.label.setText(get_text('mouse_move_method'))
         self.mouse_row.set_value(disp_method, method_color)

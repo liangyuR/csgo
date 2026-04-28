@@ -23,20 +23,20 @@ class SetupWizard(QDialog):
     def __init__(self, config, parent=None) -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Axiom Setup")
+        self.setWindowTitle(tr("setup_window_title", "Axiom Setup"))
         self.resize(560, 360)
 
         self.stack = QStackedWidget(self)
         self.language_combo = QComboBox(self)
-        self.dark_check = QCheckBox("Use dark mode", self)
-        self.acrylic_check = QCheckBox("Enable acrylic effects", self)
+        self.dark_check = QCheckBox(tr("use_dark_mode", "Use dark mode"), self)
+        self.acrylic_check = QCheckBox(tr("wizard_acrylic_enable", "Enable acrylic effects"), self)
         self.alpha_slider = QSlider(Qt.Orientation.Horizontal, self)
 
         self._build_pages()
 
-        self.back_btn = QPushButton("Back", self)
-        self.next_btn = QPushButton("Next", self)
-        self.skip_btn = QPushButton("Skip", self)
+        self.back_btn = QPushButton(tr("wizard_back", "Back"), self)
+        self.next_btn = QPushButton(tr("wizard_next", "Next"), self)
+        self.skip_btn = QPushButton(tr("wizard_skip", "Skip"), self)
         self.back_btn.clicked.connect(self._back)
         self.next_btn.clicked.connect(self._next)
         self.skip_btn.clicked.connect(self.accept)
@@ -70,9 +70,9 @@ class SetupWizard(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
 
-        heading = QLabel("Language", page)
+        heading = QLabel(tr("wizard_language_title", "Language"), page)
         heading.setObjectName("heading")
-        body = QLabel("Choose the language used by saved runtime configuration.", page)
+        body = QLabel(tr("wizard_language_subtitle", "Choose the language used by saved runtime configuration."), page)
         body.setObjectName("body")
         body.setWordWrap(True)
 
@@ -101,9 +101,9 @@ class SetupWizard(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
 
-        heading = QLabel("Theme", page)
+        heading = QLabel(tr("wizard_theme_title", "Theme"), page)
         heading.setObjectName("heading")
-        body = QLabel("Use a plain native Qt theme for the lightweight settings UI.", page)
+        body = QLabel(tr("wizard_theme_body", "Use a plain native Qt theme for the lightweight settings UI."), page)
         body.setObjectName("body")
         body.setWordWrap(True)
 
@@ -120,9 +120,9 @@ class SetupWizard(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(14)
 
-        heading = QLabel("Effects", page)
+        heading = QLabel(tr("wizard_acrylic_title", "Effects"), page)
         heading.setObjectName("heading")
-        body = QLabel("Acrylic stays optional and is only applied where the existing Win32 helpers support it.", page)
+        body = QLabel(tr("wizard_acrylic_body", "Acrylic stays optional and is only applied where the existing Win32 helpers support it."), page)
         body.setObjectName("body")
         body.setWordWrap(True)
 
@@ -133,7 +133,7 @@ class SetupWizard(QDialog):
         layout.addWidget(heading)
         layout.addWidget(body)
         layout.addWidget(self.acrylic_check)
-        layout.addWidget(QLabel("Window alpha", page))
+        layout.addWidget(QLabel(tr("window_alpha", "Window alpha"), page))
         layout.addWidget(self.alpha_slider)
         layout.addStretch(1)
         return page
@@ -152,7 +152,11 @@ class SetupWizard(QDialog):
 
     def _sync_buttons(self) -> None:
         self.back_btn.setEnabled(self.stack.currentIndex() > 0)
-        self.next_btn.setText("Finish" if self.stack.currentIndex() == self.stack.count() - 1 else "Next")
+        self.next_btn.setText(
+            tr("wizard_finish", "Finish")
+            if self.stack.currentIndex() == self.stack.count() - 1
+            else tr("wizard_next", "Next")
+        )
 
     def _apply(self) -> None:
         self.config.dark_mode = self.dark_check.isChecked()

@@ -2,11 +2,16 @@ import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTextBrowser, QPushButton, 
                              QHBoxLayout, QLabel, QWidget)
 from PyQt6.QtCore import Qt, QSize
+from core.language_manager import get_text
+
+
+def tr(key: str, default: str) -> str:
+    return get_text(key, default)
 
 class DisclaimerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Axiom - Disclaimer / Terms of Use")
+        self.setWindowTitle(tr("disclaimer_window_title", "Axiom - Disclaimer / Terms of Use"))
         self.resize(800, 600)
         # self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog) # Optional: keep frameless if desired
         
@@ -23,7 +28,7 @@ class DisclaimerDialog(QDialog):
         layout.setSpacing(20)
         
         # Title
-        title_label = QLabel("Disclaimer / Terms of Use", self)
+        title_label = QLabel(tr("disclaimer_title", "Disclaimer / Terms of Use"), self)
         title_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
@@ -48,11 +53,11 @@ class DisclaimerDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(20)
         
-        self.btn_exit = QPushButton("Decline & Exit")
+        self.btn_exit = QPushButton(tr("decline_and_exit", "Decline & Exit"))
         self.btn_exit.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_exit.clicked.connect(self.reject)
         
-        self.btn_agree = QPushButton("I Agree")
+        self.btn_agree = QPushButton(tr("agree", "I Agree"))
         self.btn_agree.setDefault(True)
         self.btn_agree.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_agree.clicked.connect(self.accept)
@@ -75,6 +80,6 @@ class DisclaimerDialog(QDialog):
                     content = f.read()
                 self.text_browser.setMarkdown(content)
             else:
-                self.text_browser.setText("Disclaimer.md not found.")
+                self.text_browser.setText(tr("disclaimer_missing", "Disclaimer.md not found."))
         except Exception as e:
-            self.text_browser.setText(f"Error loading disclaimer: {str(e)}")
+            self.text_browser.setText(tr("disclaimer_load_error", "Error loading disclaimer: {error}").format(error=str(e)))

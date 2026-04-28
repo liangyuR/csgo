@@ -37,8 +37,8 @@ LOW_SHIFT_ROI_FRACTION = 0.005
 HIGH_SHIFT_ROI_FRACTION = 0.4
 HIGH_VARIANCE_RATIO = 0.15
 DEFAULT_CONFIG_PATH = os.path.join(ROOT, "config.json")
-VALID_MOUSE_METHODS = {"mouse_event", "sendinput", "ddxoft", "arduino", "xbox", "auto"}
-CALIBRATABLE_MOUSE_METHODS = {"mouse_event", "sendinput", "ddxoft", "arduino"}
+VALID_MOUSE_METHODS = {"ddxoft"}
+CALIBRATABLE_MOUSE_METHODS = {"ddxoft"}
 
 
 @dataclass(frozen=True)
@@ -203,16 +203,10 @@ def resolve_mouse_method(cli_mouse_method: str | None, config_path: str) -> str:
     if cli_mouse_method:
         method = str(cli_mouse_method).lower()
     else:
-        method = str(read_config_data(config_path).get("mouse_move_method", "mouse_event") or "mouse_event").lower()
+        method = str(read_config_data(config_path).get("mouse_move_method", "ddxoft") or "ddxoft").lower()
 
-    if method == "hardware":
-        method = "mouse_event"
     if method not in VALID_MOUSE_METHODS:
-        raise RuntimeError(f"unsupported mouse backend for calibration: {method}")
-    if method not in CALIBRATABLE_MOUSE_METHODS:
-        raise RuntimeError(
-            f"mouse backend {method!r} cannot be calibrated with pixel displacement; choose mouse_event, sendinput, ddxoft, or arduino"
-        )
+        raise RuntimeError(f"unsupported mouse backend for calibration: {method!r}; only ddxoft is supported")
     return method
 
 
@@ -508,7 +502,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--mouse-method",
         default=None,
-        choices=("mouse_event", "sendinput", "ddxoft", "arduino", "xbox", "auto"),
+        choices=("ddxoft",),
         help="Mouse backend (default: read from config.json)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print ratios without writing config.json")

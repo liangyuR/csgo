@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import os
 import sys
-import threading
 from ctypes import WinDLL, byref, c_int
 from ctypes.wintypes import DWORD
 
@@ -43,6 +41,7 @@ from .widgets import (
     SettingsPage,
     add_row,
     open_path,
+    tr,
 )
 
 
@@ -56,32 +55,30 @@ def _is_dark(config) -> bool:
 
 class VisualsPage(SettingsPage):
     def __init__(self, parent=None) -> None:
-        super().__init__("Display", parent)
+        super().__init__(tr("display", "Display"), parent)
         self._config = None
 
-        display = self.add_card("Overlay")
-        self.show_fov = QCheckBox("Show FOV")
-        self.show_boxes = QCheckBox("Show boxes")
-        self.show_confidence = QCheckBox("Show confidence")
-        self.show_status = QCheckBox("Show status panel")
-        self.show_detect_range = QCheckBox("Show detect range")
-        for widget in (
-            self.show_fov,
-            self.show_boxes,
-            self.show_confidence,
-            self.show_status,
-            self.show_detect_range,
-        ):
-            add_row(display, widget.text(), widget)
+        self.display_card = self.add_card(tr("overlay", "Overlay"))
+        self.show_fov = QCheckBox()
+        self.show_boxes = QCheckBox()
+        self.show_confidence = QCheckBox()
+        self.show_status = QCheckBox()
+        self.show_detect_range = QCheckBox()
+        self.show_fov_label = add_row(self.display_card, "", self.show_fov)
+        self.show_boxes_label = add_row(self.display_card, "", self.show_boxes)
+        self.show_confidence_label = add_row(self.display_card, "", self.show_confidence)
+        self.show_status_label = add_row(self.display_card, "", self.show_status)
+        self.show_detect_range_label = add_row(self.display_card, "", self.show_detect_range)
 
-        appearance = self.add_card("Appearance")
-        self.dark_mode = QCheckBox("Dark mode")
-        self.enable_acrylic = QCheckBox("Enable acrylic")
+        self.appearance_card = self.add_card(tr("appearance_options", "Appearance"))
+        self.dark_mode = QCheckBox()
+        self.enable_acrylic = QCheckBox()
         self.window_alpha = IntSliderSpin(0, 255)
-        add_row(appearance, "Dark mode", self.dark_mode)
-        add_row(appearance, "Enable acrylic", self.enable_acrylic)
-        add_row(appearance, "Acrylic window alpha", self.window_alpha)
+        self.dark_mode_label = add_row(self.appearance_card, "", self.dark_mode)
+        self.enable_acrylic_label = add_row(self.appearance_card, "", self.enable_acrylic)
+        self.window_alpha_label = add_row(self.appearance_card, "", self.window_alpha)
         self.finish()
+        self.retranslateUi()
 
         self.show_fov.toggled.connect(lambda v: self._set("show_fov", v))
         self.show_boxes.toggled.connect(lambda v: self._set("show_boxes", v))
@@ -122,86 +119,71 @@ class VisualsPage(SettingsPage):
         if self._config is not None and not self._loading:
             self._config.acrylic_window_alpha = int(value)
 
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("display", "Display"))
+        self.display_card.title_label.setText(tr("overlay", "Overlay"))  # type: ignore[attr-defined]
+        self.appearance_card.title_label.setText(tr("appearance_options", "Appearance"))  # type: ignore[attr-defined]
+        for label, key, default in (
+            (self.show_fov_label, "show_fov", "Show FOV"),
+            (self.show_boxes_label, "show_boxes", "Show boxes"),
+            (self.show_confidence_label, "show_confidence", "Show confidence"),
+            (self.show_status_label, "show_status_panel", "Show status panel"),
+            (self.show_detect_range_label, "show_detect_range", "Show detect range"),
+            (self.dark_mode_label, "use_dark_mode", "Dark mode"),
+            (self.enable_acrylic_label, "enable_acrylic", "Enable acrylic"),
+            (self.window_alpha_label, "acrylic_window_alpha", "Acrylic window alpha"),
+        ):
+            if label is not None:
+                label.setText(tr(key, default))
+
 
 class AimPage(SettingsPage):
     def __init__(self, parent=None) -> None:
-        super().__init__("Aim", parent)
+        super().__init__(tr("aim", "Aim"), parent)
         self._config = None
         self._model_specs = []
 
-        model = self.add_card("Model")
+        self.model_card = self.add_card(tr("model_settings", "Model"))
         self.model_combo = QComboBox()
         self.class_combo = QComboBox()
-        self.open_model_btn = QPushButton("Open Model Folder")
-        add_row(model, "Model", self.model_combo)
-        add_row(model, "Active target class", self.class_combo)
-        add_row(model, "Model folder", self.open_model_btn)
+        self.open_model_btn = QPushButton()
+        self.model_label = add_row(self.model_card, "", self.model_combo)
+        self.class_label = add_row(self.model_card, "", self.class_combo)
+        self.model_folder_label = add_row(self.model_card, "", self.open_model_btn)
 
-        fov = self.add_card("FOV and detection")
+        self.fov_card = self.add_card(tr("fov_and_detect_range", "FOV and detection"))
         self.fov_size = IntSliderSpin(50, 500, " px")
-        self.fov_follow = QCheckBox("Follow mouse")
+        self.fov_follow = QCheckBox()
         self.detect_range = IntSliderSpin(50, 1080, " px")
-        add_row(fov, "FOV size", self.fov_size)
-        add_row(fov, "FOV follows mouse", self.fov_follow)
-        add_row(fov, "Detect range size", self.detect_range)
+        self.fov_size_label = add_row(self.fov_card, "", self.fov_size)
+        self.fov_follow_label = add_row(self.fov_card, "", self.fov_follow)
+        self.detect_range_label = add_row(self.fov_card, "", self.detect_range)
 
-        general = self.add_card("General")
+        self.general_card = self.add_card(tr("general_params", "General"))
         self.detect_interval = IntSliderSpin(1, 100, " ms")
         self.confidence = IntSliderSpin(1, 100, "%")
         self.aim_part = QComboBox()
         self.aim_part.addItems(["head", "body", "both"])
         self.mouse_method = QComboBox()
-        self.mouse_method.addItems(["ddxoft", "mouse_event", "arduino", "xbox"])
+        self.mouse_method.addItems(["ddxoft"])
         self.always_aim = QCheckBox()
         self.keep_detecting = QCheckBox()
         self.sticky_target = QCheckBox()
         self.aim_deadzone = IntSliderSpin(0, 20, " px")
         self.lock_radius = IntSliderSpin(8, 300, " px")
         self.lock_time = IntSliderSpin(0, 500, " ms")
-        add_row(general, "Detect interval", self.detect_interval)
-        add_row(general, "Minimum confidence", self.confidence)
-        add_row(general, "Aim part", self.aim_part)
-        add_row(general, "Mouse move method", self.mouse_method)
-        add_row(general, "Always aim", self.always_aim)
-        add_row(general, "Keep detecting", self.keep_detecting)
-        add_row(general, "Sticky target", self.sticky_target)
-        add_row(general, "Aim deadzone", self.aim_deadzone)
-        add_row(general, "Lock retain radius", self.lock_radius)
-        add_row(general, "Lock retain time", self.lock_time)
+        self.detect_interval_label = add_row(self.general_card, "", self.detect_interval)
+        self.confidence_label = add_row(self.general_card, "", self.confidence)
+        self.aim_part_label = add_row(self.general_card, "", self.aim_part)
+        self.mouse_method_label = add_row(self.general_card, "", self.mouse_method)
+        self.always_aim_label = add_row(self.general_card, "", self.always_aim)
+        self.keep_detecting_label = add_row(self.general_card, "", self.keep_detecting)
+        self.sticky_target_label = add_row(self.general_card, "", self.sticky_target)
+        self.aim_deadzone_label = add_row(self.general_card, "", self.aim_deadzone)
+        self.lock_radius_label = add_row(self.general_card, "", self.lock_radius)
+        self.lock_time_label = add_row(self.general_card, "", self.lock_time)
 
-        self.arduino_group = self.add_card("Arduino")
-        self.com_combo = QComboBox()
-        self.refresh_com_btn = QPushButton("Refresh")
-        com_box = QWidget()
-        com_layout = QHBoxLayout(com_box)
-        com_layout.setContentsMargins(0, 0, 0, 0)
-        com_layout.addWidget(self.com_combo)
-        com_layout.addWidget(self.refresh_com_btn)
-        self.arduino_status = QLabel("Disconnected")
-        self.arduino_connect_btn = QPushButton("Connect")
-        self.arduino_guide_btn = QPushButton("Open guide")
-        self.arduino_spoof_btn = QPushButton("Spoof device")
-        self.arduino_verify_btn = QPushButton("Verify spoof")
-        self.arduino_test_btn = QPushButton("Test heart")
-        add_row(self.arduino_group, "COM port", com_box)
-        add_row(self.arduino_group, "Connection", self.arduino_status)
-        add_row(self.arduino_group, "Connect", self.arduino_connect_btn)
-        add_row(self.arduino_group, "Guide", self.arduino_guide_btn)
-        add_row(self.arduino_group, "Spoof device", self.arduino_spoof_btn)
-        add_row(self.arduino_group, "Verify spoof", self.arduino_verify_btn)
-        add_row(self.arduino_group, "Test movement", self.arduino_test_btn)
-
-        self.xbox_group = self.add_card("Xbox 360 Controller")
-        self.xbox_sensitivity = IntSliderSpin(10, 500, "%")
-        self.xbox_deadzone = IntSliderSpin(0, 50, "%")
-        self.xbox_status = QLabel("Disconnected")
-        self.xbox_connect_btn = QPushButton("Connect")
-        add_row(self.xbox_group, "Sensitivity", self.xbox_sensitivity)
-        add_row(self.xbox_group, "Deadzone", self.xbox_deadzone)
-        add_row(self.xbox_group, "Connection", self.xbox_status)
-        add_row(self.xbox_group, "Connect", self.xbox_connect_btn)
-
-        pid = self.add_card("PID")
+        self.pid_card = self.add_card(tr("pid", "PID"))
         self.pid_tabs = QTabWidget()
         self.pid_px = IntSliderSpin(0, 100)
         self.pid_ix = IntSliderSpin(0, 100)
@@ -211,17 +193,17 @@ class AimPage(SettingsPage):
         self.pid_dy = IntSliderSpin(0, 100)
         self.pid_tabs.addTab(self._pid_axis_page(self.pid_px, self.pid_ix, self.pid_dx), "X")
         self.pid_tabs.addTab(self._pid_axis_page(self.pid_py, self.pid_iy, self.pid_dy), "Y")
-        pid.layout().addWidget(self.pid_tabs)
+        self.pid_card.layout().addWidget(self.pid_tabs)
 
-        bezier = self.add_card("Bezier curve")
+        self.bezier_card = self.add_card(tr("bezier_curve", "Bezier curve"))
         self.bezier_enabled = QCheckBox()
         self.bezier_strength = IntSliderSpin(0, 100, "%")
         self.bezier_steps = IntSliderSpin(2, 20)
-        add_row(bezier, "Enable", self.bezier_enabled)
-        add_row(bezier, "Strength", self.bezier_strength)
-        add_row(bezier, "Steps", self.bezier_steps)
+        self.bezier_enabled_label = add_row(self.bezier_card, "", self.bezier_enabled)
+        self.bezier_strength_label = add_row(self.bezier_card, "", self.bezier_strength)
+        self.bezier_steps_label = add_row(self.bezier_card, "", self.bezier_steps)
 
-        tracker = self.add_card("Tracker prediction")
+        self.tracker_card = self.add_card(tr("tracker_prediction", "Tracker prediction"))
         self.tracker_enabled = QCheckBox()
         self.prediction_time = IntSliderSpin(0, 100, " ms")
         self.velocity_alpha = IntSliderSpin(0, 100, "%")
@@ -230,15 +212,16 @@ class AimPage(SettingsPage):
         self.motion_ratio = IntSliderSpin(0, 150, "%")
         self.prediction_max_distance = IntSliderSpin(0, 200, " px")
         self.tracker_show = QCheckBox()
-        add_row(tracker, "Enable tracker", self.tracker_enabled)
-        add_row(tracker, "Prediction lead time", self.prediction_time)
-        add_row(tracker, "Velocity EMA alpha", self.velocity_alpha)
-        add_row(tracker, "Velocity deadzone", self.velocity_deadzone)
-        add_row(tracker, "Screen motion compensation", self.motion_comp)
-        add_row(tracker, "Motion compensation ratio", self.motion_ratio)
-        add_row(tracker, "Max prediction distance", self.prediction_max_distance)
-        add_row(tracker, "Show prediction overlay", self.tracker_show)
+        self.tracker_enabled_label = add_row(self.tracker_card, "", self.tracker_enabled)
+        self.prediction_time_label = add_row(self.tracker_card, "", self.prediction_time)
+        self.velocity_alpha_label = add_row(self.tracker_card, "", self.velocity_alpha)
+        self.velocity_deadzone_label = add_row(self.tracker_card, "", self.velocity_deadzone)
+        self.motion_comp_label = add_row(self.tracker_card, "", self.motion_comp)
+        self.motion_ratio_label = add_row(self.tracker_card, "", self.motion_ratio)
+        self.prediction_max_distance_label = add_row(self.tracker_card, "", self.prediction_max_distance)
+        self.tracker_show_label = add_row(self.tracker_card, "", self.tracker_show)
         self.finish()
+        self.retranslateUi()
 
         self._connect()
 
@@ -250,9 +233,9 @@ class AimPage(SettingsPage):
         add_row_card.setObjectName("flatCard")
         card_layout = QVBoxLayout(add_row_card)
         card_layout.setContentsMargins(0, 0, 0, 0)
-        add_row(add_row_card, "P reaction", p)
-        add_row(add_row_card, "I correction", i)
-        add_row(add_row_card, "D stability", d)
+        add_row(add_row_card, tr("reaction_speed_p", "P reaction"), p)
+        add_row(add_row_card, tr("error_correction_i", "I correction"), i)
+        add_row(add_row_card, tr("stability_suppression_d", "D stability"), d)
         layout.addWidget(add_row_card)
         return page
 
@@ -275,11 +258,6 @@ class AimPage(SettingsPage):
         self.aim_deadzone.setValue(int(getattr(config, "aim_position_deadzone_px", 1.0)))
         self.lock_radius.setValue(int(getattr(config, "lock_retain_radius_px", 48.0)))
         self.lock_time.setValue(int(getattr(config, "lock_retain_time_s", 0.12) * 1000))
-        self._refresh_com_ports()
-        if getattr(config, "arduino_com_port", ""):
-            self.com_combo.setCurrentText(config.arduino_com_port)
-        self.xbox_sensitivity.setValue(int(getattr(config, "xbox_sensitivity", 1.0) * 100))
-        self.xbox_deadzone.setValue(int(getattr(config, "xbox_deadzone", 0.05) * 100))
         self.pid_px.setValue(int(config.pid_kp_x * 100))
         self.pid_ix.setValue(int(config.pid_ki_x * 100))
         self.pid_dx.setValue(int(config.pid_kd_x * 100))
@@ -297,9 +275,51 @@ class AimPage(SettingsPage):
         self.motion_ratio.setValue(int(getattr(config, "screen_motion_compensation_ratio", 1.0) * 100))
         self.prediction_max_distance.setValue(int(getattr(config, "prediction_max_distance_px", 20.0)))
         self.tracker_show.setChecked(bool(config.tracker_show_prediction))
-        self._update_method_groups(config.mouse_move_method)
-        self._update_connection_labels()
         self._loading = False
+
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("aim", "Aim"))
+        for card, key, default in (
+            (self.model_card, "model_settings", "Model"),
+            (self.fov_card, "fov_and_detect_range", "FOV and detection"),
+            (self.general_card, "general_params", "General"),
+            (self.pid_card, "pid", "PID"),
+            (self.bezier_card, "bezier_curve", "Bezier curve"),
+            (self.tracker_card, "tracker_prediction", "Tracker prediction"),
+        ):
+            card.title_label.setText(tr(key, default))  # type: ignore[attr-defined]
+        self.open_model_btn.setText(tr("open_model_folder", "Open Model Folder"))
+        for label, key, default in (
+            (self.model_label, "model", "Model"),
+            (self.class_label, "active_target_class", "Active target class"),
+            (self.model_folder_label, "model_folder", "Model folder"),
+            (self.fov_size_label, "fov_size", "FOV size"),
+            (self.fov_follow_label, "fov_follow_mouse", "FOV follows mouse"),
+            (self.detect_range_label, "detect_range_size", "Detect range size"),
+            (self.detect_interval_label, "detect_interval", "Detect interval"),
+            (self.confidence_label, "minimum_confidence", "Minimum confidence"),
+            (self.aim_part_label, "aim_part", "Aim part"),
+            (self.mouse_method_label, "mouse_move_method", "Mouse move method"),
+            (self.always_aim_label, "always_aim_label", "Always aim"),
+            (self.keep_detecting_label, "keep_detecting_label", "Keep detecting"),
+            (self.sticky_target_label, "sticky_target_label", "Sticky target"),
+            (self.aim_deadzone_label, "aim_position_deadzone_px", "Aim deadzone"),
+            (self.lock_radius_label, "lock_retain_radius_px", "Lock retain radius"),
+            (self.lock_time_label, "lock_retain_time_s", "Lock retain time"),
+            (self.bezier_enabled_label, "enable", "Enable"),
+            (self.bezier_strength_label, "strength", "Strength"),
+            (self.bezier_steps_label, "steps", "Steps"),
+            (self.tracker_enabled_label, "enable_tracker", "Enable tracker"),
+            (self.prediction_time_label, "prediction_lead_time", "Prediction lead time"),
+            (self.velocity_alpha_label, "velocity_ema_alpha", "Velocity EMA alpha"),
+            (self.velocity_deadzone_label, "velocity_deadzone", "Velocity deadzone"),
+            (self.motion_comp_label, "screen_motion_compensation", "Screen motion compensation"),
+            (self.motion_ratio_label, "motion_compensation_ratio", "Motion compensation ratio"),
+            (self.prediction_max_distance_label, "prediction_max_distance_px", "Max prediction distance"),
+            (self.tracker_show_label, "show_prediction_overlay", "Show prediction overlay"),
+        ):
+            if label is not None:
+                label.setText(tr(key, default))
 
     def _connect(self) -> None:
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
@@ -318,16 +338,6 @@ class AimPage(SettingsPage):
         self.aim_deadzone.valueChanged.connect(lambda v: self._set("aim_position_deadzone_px", float(v)))
         self.lock_radius.valueChanged.connect(lambda v: self._set("lock_retain_radius_px", float(v)))
         self.lock_time.valueChanged.connect(lambda v: self._set("lock_retain_time_s", v / 1000.0))
-        self.refresh_com_btn.clicked.connect(self._refresh_com_ports)
-        self.com_combo.currentTextChanged.connect(self._on_com_port)
-        self.arduino_connect_btn.clicked.connect(self._on_arduino_connect)
-        self.arduino_guide_btn.clicked.connect(self._open_arduino_guide)
-        self.arduino_spoof_btn.clicked.connect(self._spoof_arduino)
-        self.arduino_verify_btn.clicked.connect(self._verify_arduino)
-        self.arduino_test_btn.clicked.connect(self._test_arduino_heart)
-        self.xbox_sensitivity.valueChanged.connect(self._on_xbox_sensitivity)
-        self.xbox_deadzone.valueChanged.connect(self._on_xbox_deadzone)
-        self.xbox_connect_btn.clicked.connect(self._on_xbox_connect)
         self.pid_px.valueChanged.connect(lambda v: self._set("pid_kp_x", v / 100.0))
         self.pid_ix.valueChanged.connect(lambda v: self._set("pid_ki_x", v / 100.0))
         self.pid_dx.valueChanged.connect(lambda v: self._set("pid_kd_x", v / 100.0))
@@ -434,184 +444,33 @@ class AimPage(SettingsPage):
 
     def _on_mouse_method(self, text: str) -> None:
         self._set("mouse_move_method", text)
-        self._update_method_groups(text)
-
-    def _update_method_groups(self, method: str) -> None:
-        self.arduino_group.setVisible(method == "arduino")
-        self.xbox_group.setVisible(method == "xbox")
-
-    def _refresh_com_ports(self) -> None:
-        current = self.com_combo.currentText()
-        self.com_combo.blockSignals(True)
-        self.com_combo.clear()
-        self.com_combo.addItem("No COM port")
-        try:
-            import serial.tools.list_ports
-
-            for port in serial.tools.list_ports.comports():
-                self.com_combo.addItem(port.device)
-        except Exception:
-            pass
-        if current:
-            self.com_combo.setCurrentText(current)
-        self.com_combo.blockSignals(False)
-
-    def _on_com_port(self, text: str) -> None:
-        if self._config is not None and not self._loading and text != "No COM port":
-            self._config.arduino_com_port = text
-
-    def _on_arduino_connect(self) -> None:
-        try:
-            from win_utils import connect_arduino, disconnect_arduino, is_arduino_connected
-
-            if is_arduino_connected():
-                disconnect_arduino()
-            else:
-                port = self.com_combo.currentText()
-                if not port or port == "No COM port":
-                    QMessageBox.warning(self, "Arduino", "Select a COM port first.")
-                    return
-                connect_arduino(port)
-        except Exception as exc:
-            QMessageBox.warning(self, "Arduino", str(exc))
-        self._update_connection_labels()
-
-    def _open_arduino_guide(self) -> None:
-        guide = os.path.join(SRC_ROOT, "Arduino_User_Guide.html")
-        if os.path.exists(guide):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(guide))
-
-    def _spoof_arduino(self) -> None:
-        if QMessageBox.question(self, "Spoof device", "Apply Arduino board spoof?") != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            from win_utils.arduino_spoofer import spoof_arduino_board
-
-            success, path = spoof_arduino_board()
-            if success:
-                QMessageBox.information(self, "Spoof device", "Spoof operation completed.")
-            else:
-                QMessageBox.warning(self, "Spoof device", f"Spoof operation failed.\n{path}")
-        except Exception as exc:
-            QMessageBox.warning(self, "Spoof device", str(exc))
-
-    def _verify_arduino(self) -> None:
-        try:
-            from win_utils.arduino_spoofer import verify_spoof
-
-            port = getattr(self._config, "arduino_com_port", "") if self._config else ""
-            spoofed, message = verify_spoof(port or None)
-            if spoofed:
-                QMessageBox.information(self, "Verify spoof", message)
-            else:
-                QMessageBox.warning(self, "Verify spoof", message)
-        except Exception as exc:
-            QMessageBox.warning(self, "Verify spoof", str(exc))
-
-    def _test_arduino_heart(self) -> None:
-        if QMessageBox.question(self, "Test movement", "Move the Arduino cursor in a heart pattern?") != QMessageBox.StandardButton.Yes:
-            return
-
-        def draw() -> None:
-            import time
-            from win_utils.arduino_mouse import arduino_mouse
-
-            if not arduino_mouse.is_connected():
-                port = getattr(self._config, "arduino_com_port", "") if self._config else ""
-                if not port or not arduino_mouse.connect(port):
-                    return
-            points = []
-            for index in range(121):
-                angle = 2 * math.pi * index / 120
-                x = 16 * (math.sin(angle) ** 3)
-                y = -(13 * math.cos(angle) - 5 * math.cos(2 * angle) - 2 * math.cos(3 * angle) - math.cos(4 * angle))
-                points.append((x * 3.0, y * 3.0))
-            for index in range(1, len(points)):
-                dx = int(round(points[index][0] - points[index - 1][0]))
-                dy = int(round(points[index][1] - points[index - 1][1]))
-                if dx or dy:
-                    arduino_mouse.move(dx, dy)
-                time.sleep(0.015)
-
-        threading.Thread(target=draw, daemon=True).start()
-
-    def _on_xbox_sensitivity(self, value: int) -> None:
-        self._set("xbox_sensitivity", value / 100.0)
-        try:
-            from win_utils import set_xbox_sensitivity
-
-            set_xbox_sensitivity(value / 100.0)
-        except Exception:
-            pass
-
-    def _on_xbox_deadzone(self, value: int) -> None:
-        self._set("xbox_deadzone", value / 100.0)
-        try:
-            from win_utils import set_xbox_deadzone
-
-            set_xbox_deadzone(value / 100.0)
-        except Exception:
-            pass
-
-    def _on_xbox_connect(self) -> None:
-        try:
-            from win_utils import connect_xbox, disconnect_xbox, is_xbox_connected
-
-            if is_xbox_connected():
-                disconnect_xbox()
-            else:
-                connect_xbox()
-        except Exception as exc:
-            QMessageBox.warning(self, "Xbox", str(exc))
-        self._update_connection_labels()
-
-    def _update_connection_labels(self) -> None:
-        try:
-            from win_utils import is_arduino_connected
-
-            connected = is_arduino_connected()
-            self.arduino_status.setText("Connected" if connected else "Disconnected")
-            self.arduino_connect_btn.setText("Disconnect" if connected else "Connect")
-        except Exception:
-            self.arduino_status.setText("Unavailable")
-        try:
-            from win_utils import is_xbox_available, is_xbox_connected
-
-            if not is_xbox_available():
-                self.xbox_status.setText("Unavailable")
-                self.xbox_connect_btn.setText("Connect")
-            else:
-                connected = is_xbox_connected()
-                self.xbox_status.setText("Connected" if connected else "Disconnected")
-                self.xbox_connect_btn.setText("Disconnect" if connected else "Connect")
-        except Exception:
-            self.xbox_status.setText("Unavailable")
 
 
 class TriggerPage(SettingsPage):
     def __init__(self, parent=None) -> None:
-        super().__init__("Trigger", parent)
+        super().__init__(tr("trigger", "Trigger"), parent)
         self._config = None
 
-        self.fire_group = self.add_card("Auto fire")
+        self.fire_group = self.add_card(tr("auto_fire", "Auto fire"))
         self.fire_target = QComboBox()
         self.fire_target.addItems(["head", "body", "both"])
         self.always_fire = QCheckBox()
         self.scope_delay = FloatSpin(0.0, 2.0, 2, 0.01, " s")
         self.fire_interval = FloatSpin(0.01, 1.0, 2, 0.01, " s")
-        add_row(self.fire_group, "Auto fire target", self.fire_target)
-        add_row(self.fire_group, "Always auto fire", self.always_fire)
-        add_row(self.fire_group, "Scope delay", self.scope_delay)
-        add_row(self.fire_group, "Fire interval", self.fire_interval)
+        self.fire_target_label = add_row(self.fire_group, "", self.fire_target)
+        self.always_fire_label = add_row(self.fire_group, "", self.always_fire)
+        self.scope_delay_label = add_row(self.fire_group, "", self.scope_delay)
+        self.fire_interval_label = add_row(self.fire_group, "", self.fire_interval)
 
-        self.area_group = self.add_card("Target area")
+        self.area_group = self.add_card(tr("target_area", "Target area"))
         self.head_width = IntSliderSpin(10, 100, "%")
         self.head_height = IntSliderSpin(10, 100, "%")
         self.body_width = IntSliderSpin(10, 100, "%")
-        add_row(self.area_group, "Head width ratio", self.head_width)
-        add_row(self.area_group, "Head height ratio", self.head_height)
-        add_row(self.area_group, "Body width ratio", self.body_width)
+        self.head_width_label = add_row(self.area_group, "", self.head_width)
+        self.head_height_label = add_row(self.area_group, "", self.head_height)
+        self.body_width_label = add_row(self.area_group, "", self.body_width)
         self.finish()
+        self.retranslateUi()
 
         self.fire_target.currentTextChanged.connect(lambda v: self._set("auto_fire_target_part", v))
         self.always_fire.toggled.connect(lambda v: self._set("always_auto_fire", v))
@@ -645,30 +504,47 @@ class TriggerPage(SettingsPage):
         if self._config is not None and not self._loading:
             setattr(self._config, attr, value)
 
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("trigger", "Trigger"))
+        self.fire_group.title_label.setText(tr("auto_fire", "Auto fire"))  # type: ignore[attr-defined]
+        self.area_group.title_label.setText(tr("target_area", "Target area"))  # type: ignore[attr-defined]
+        for label, key, default in (
+            (self.fire_target_label, "auto_fire_target", "Auto fire target"),
+            (self.always_fire_label, "always_auto_fire", "Always auto fire"),
+            (self.scope_delay_label, "scope_delay", "Scope delay"),
+            (self.fire_interval_label, "fire_interval", "Fire interval"),
+            (self.head_width_label, "head_width_ratio", "Head width ratio"),
+            (self.head_height_label, "head_height_ratio", "Head height ratio"),
+            (self.body_width_label, "body_width_ratio", "Body width ratio"),
+        ):
+            if label is not None:
+                label.setText(tr(key, default))
+
 
 class KeysPage(SettingsPage):
     def __init__(self, parent=None) -> None:
-        super().__init__("Keys", parent)
+        super().__init__(tr("keys", "Keys"), parent)
         self._config = None
 
-        aim = self.add_card("Auto aim")
+        self.aim_card = self.add_card(tr("auto_aim", "Auto aim"))
         self.aim_key_1 = KeyBindButton()
         self.aim_key_2 = KeyBindButton()
         self.aim_key_3 = KeyBindButton()
         self.toggle_key = KeyBindButton()
         self.cycle_key = KeyBindButton()
-        add_row(aim, "Aim key 1", self.aim_key_1)
-        add_row(aim, "Aim key 2", self.aim_key_2)
-        add_row(aim, "Aim key 3", self.aim_key_3)
-        add_row(aim, "Toggle key", self.toggle_key)
-        add_row(aim, "Cycle target key", self.cycle_key)
+        self.aim_key_1_label = add_row(self.aim_card, "", self.aim_key_1)
+        self.aim_key_2_label = add_row(self.aim_card, "", self.aim_key_2)
+        self.aim_key_3_label = add_row(self.aim_card, "", self.aim_key_3)
+        self.toggle_key_label = add_row(self.aim_card, "", self.toggle_key)
+        self.cycle_key_label = add_row(self.aim_card, "", self.cycle_key)
 
-        fire = self.add_card("Auto fire")
+        self.fire_card = self.add_card(tr("auto_fire", "Auto fire"))
         self.fire_key_1 = KeyBindButton()
         self.fire_key_2 = KeyBindButton()
-        add_row(fire, "Auto fire key 1", self.fire_key_1)
-        add_row(fire, "Auto fire key 2", self.fire_key_2)
+        self.fire_key_1_label = add_row(self.fire_card, "", self.fire_key_1)
+        self.fire_key_2_label = add_row(self.fire_card, "", self.fire_key_2)
         self.finish()
+        self.retranslateUi()
 
         self.aim_key_1.keyBound.connect(lambda vk: self._set_aim_key(0, vk))
         self.aim_key_2.keyBound.connect(lambda vk: self._set_aim_key(1, vk))
@@ -688,6 +564,32 @@ class KeysPage(SettingsPage):
         self.cycle_key.setVkCode(getattr(config, "cycle_target_key", 0x77))
         self.fire_key_1.setVkCode(config.auto_fire_key)
         self.fire_key_2.setVkCode(config.auto_fire_key2)
+
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("keys", "Keys"))
+        self.aim_card.title_label.setText(tr("auto_aim", "Auto aim"))  # type: ignore[attr-defined]
+        self.fire_card.title_label.setText(tr("auto_fire", "Auto fire"))  # type: ignore[attr-defined]
+        for label, key, default in (
+            (self.aim_key_1_label, "aim_key_1", "Aim key 1"),
+            (self.aim_key_2_label, "aim_key_2", "Aim key 2"),
+            (self.aim_key_3_label, "aim_key_3", "Aim key 3"),
+            (self.toggle_key_label, "toggle_key", "Toggle key"),
+            (self.cycle_key_label, "cycle_target_key", "Cycle target key"),
+            (self.fire_key_1_label, "auto_fire_key_1", "Auto fire key 1"),
+            (self.fire_key_2_label, "auto_fire_key_2", "Auto fire key 2"),
+        ):
+            if label is not None:
+                label.setText(tr(key, default))
+        for button in (
+            self.aim_key_1,
+            self.aim_key_2,
+            self.aim_key_3,
+            self.toggle_key,
+            self.cycle_key,
+            self.fire_key_1,
+            self.fire_key_2,
+        ):
+            button.refreshText()
 
     def _set(self, attr: str, value) -> None:
         if self._config is not None:
@@ -719,18 +621,18 @@ class ConfigsPage(QWidget):
         action_layout.setContentsMargins(16, 14, 16, 14)
         action_layout.setSpacing(10)
 
-        title = QLabel("Config profiles", actions)
-        title.setObjectName("groupTitle")
-        action_layout.addWidget(title)
-        self.create_btn = QPushButton("Create")
-        self.load_btn = QPushButton("Load")
-        self.save_btn = QPushButton("Save")
-        self.delete_btn = QPushButton("Delete")
-        self.rename_btn = QPushButton("Rename")
-        self.refresh_btn = QPushButton("Refresh")
-        self.import_btn = QPushButton("Import")
-        self.export_btn = QPushButton("Export")
-        self.open_folder_btn = QPushButton("Open Folder")
+        self.title_label = QLabel(actions)
+        self.title_label.setObjectName("groupTitle")
+        action_layout.addWidget(self.title_label)
+        self.create_btn = QPushButton()
+        self.load_btn = QPushButton()
+        self.save_btn = QPushButton()
+        self.delete_btn = QPushButton()
+        self.rename_btn = QPushButton()
+        self.refresh_btn = QPushButton()
+        self.import_btn = QPushButton()
+        self.export_btn = QPushButton()
+        self.open_folder_btn = QPushButton()
         for button in (
             self.create_btn,
             self.load_btn,
@@ -759,6 +661,7 @@ class ConfigsPage(QWidget):
         self.import_btn.clicked.connect(self._import)
         self.export_btn.clicked.connect(self._export)
         self.open_folder_btn.clicked.connect(self._open_folder)
+        self.retranslateUi()
 
     def setConfig(self, config) -> None:
         self._config = config
@@ -779,7 +682,11 @@ class ConfigsPage(QWidget):
             self.config_list.addItem(name)
 
     def _create(self) -> None:
-        name, ok = QInputDialog.getText(self, "Create config", "Config name:")
+        name, ok = QInputDialog.getText(
+            self,
+            tr("create_config", "Create config"),
+            tr("config_name_prompt", "Config name:"),
+        )
         if ok and name and self._config_manager and self._config:
             self._config_manager.save_config(self._config, name)
             self._refresh()
@@ -787,22 +694,23 @@ class ConfigsPage(QWidget):
     def _load(self) -> None:
         name = self._selected()
         if not name:
-            QMessageBox.warning(self, "Config", "Select a config first.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("select_config_first", "Select a config first."))
             return
         if self._config_manager and self._config and self._config_manager.load_config(self._config, name):
             window = self.window()
             if hasattr(window, "_refreshAllPages"):
                 window._refreshAllPages()
-            QMessageBox.information(self, "Config", "Config loaded.")
+            QMessageBox.information(self, tr("config_manager", "Config"), tr("config_loaded_message", "Config loaded."))
         else:
-            QMessageBox.warning(self, "Config", "Config load failed.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("config_load_failed_message", "Config load failed."))
 
     def _save(self) -> None:
         name = self._selected()
         if not name:
-            QMessageBox.warning(self, "Config", "Select a config first.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("select_config_first", "Select a config first."))
             return
-        if QMessageBox.question(self, "Config", f"Overwrite {name}?") != QMessageBox.StandardButton.Yes:
+        prompt = tr("overwrite_config_prompt", "Overwrite {name}?").format(name=name)
+        if QMessageBox.question(self, tr("config_manager", "Config"), prompt) != QMessageBox.StandardButton.Yes:
             return
         if self._config_manager and self._config:
             self._config_manager.save_config(self._config, name)
@@ -810,9 +718,10 @@ class ConfigsPage(QWidget):
     def _delete(self) -> None:
         name = self._selected()
         if not name:
-            QMessageBox.warning(self, "Config", "Select a config first.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("select_config_first", "Select a config first."))
             return
-        if QMessageBox.question(self, "Config", f"Delete {name}?") != QMessageBox.StandardButton.Yes:
+        prompt = tr("delete_config_prompt", "Delete {name}?").format(name=name)
+        if QMessageBox.question(self, tr("config_manager", "Config"), prompt) != QMessageBox.StandardButton.Yes:
             return
         if self._config_manager:
             self._config_manager.delete_config(name)
@@ -821,15 +730,25 @@ class ConfigsPage(QWidget):
     def _rename(self) -> None:
         old_name = self._selected()
         if not old_name:
-            QMessageBox.warning(self, "Config", "Select a config first.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("select_config_first", "Select a config first."))
             return
-        new_name, ok = QInputDialog.getText(self, "Rename config", "New name:", text=old_name)
+        new_name, ok = QInputDialog.getText(
+            self,
+            tr("rename_config_title", "Rename config"),
+            tr("new_name_prompt", "New name:"),
+            text=old_name,
+        )
         if ok and new_name and self._config_manager:
             self._config_manager.rename_config(old_name, new_name)
             self._refresh()
 
     def _import(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Import config", "", "JSON Files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            tr("import_config", "Import config"),
+            "",
+            tr("json_files_filter", "JSON Files (*.json)"),
+        )
         if path and self._config_manager:
             self._config_manager.import_config(path)
             self._refresh()
@@ -837,9 +756,14 @@ class ConfigsPage(QWidget):
     def _export(self) -> None:
         name = self._selected()
         if not name:
-            QMessageBox.warning(self, "Config", "Select a config first.")
+            QMessageBox.warning(self, tr("config_manager", "Config"), tr("select_config_first", "Select a config first."))
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export config", f"{name}.json", "JSON Files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            tr("export_config", "Export config"),
+            f"{name}.json",
+            tr("json_files_filter", "JSON Files (*.json)"),
+        )
         if path and self._config_manager:
             self._config_manager.export_config(name, path)
 
@@ -847,23 +771,35 @@ class ConfigsPage(QWidget):
         if self._config_manager:
             open_path(os.path.abspath(self._config_manager.configs_dir))
 
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("config_profiles", "Config profiles"))
+        self.create_btn.setText(tr("create_config", "Create"))
+        self.load_btn.setText(tr("load_config", "Load"))
+        self.save_btn.setText(tr("save_config", "Save"))
+        self.delete_btn.setText(tr("delete_config", "Delete"))
+        self.rename_btn.setText(tr("rename_config", "Rename"))
+        self.refresh_btn.setText(tr("refresh", "Refresh"))
+        self.import_btn.setText(tr("import_config", "Import"))
+        self.export_btn.setText(tr("export_config", "Export"))
+        self.open_folder_btn.setText(tr("open_config_folder", "Open Folder"))
+
 
 class OtherPage(SettingsPage):
     def __init__(self, parent=None) -> None:
-        super().__init__("Other", parent)
+        super().__init__(tr("other", "Other"), parent)
         self._config = None
 
-        program = self.add_card("Program")
+        self.program_card = self.add_card(tr("program", "Program"))
         self.show_console = QCheckBox()
-        self.refresh_runtime_btn = QPushButton("Refresh Runtime Settings")
-        self.save_btn = QPushButton("Save Config")
-        self.exit_btn = QPushButton("Exit and Save")
-        add_row(program, "Show console", self.show_console)
-        add_row(program, "Apply runtime settings", self.refresh_runtime_btn)
-        add_row(program, "Save current config", self.save_btn)
-        add_row(program, "Exit", self.exit_btn)
+        self.refresh_runtime_btn = QPushButton()
+        self.save_btn = QPushButton()
+        self.exit_btn = QPushButton()
+        self.show_console_label = add_row(self.program_card, "", self.show_console)
+        self.refresh_runtime_label = add_row(self.program_card, "", self.refresh_runtime_btn)
+        self.save_config_label = add_row(self.program_card, "", self.save_btn)
+        self.exit_label = add_row(self.program_card, "", self.exit_btn)
 
-        language = self.add_card("Language")
+        self.language_card = self.add_card(tr("language", "Language"))
         self.language_combo = QComboBox()
         try:
             from core.language_manager import language_manager
@@ -872,22 +808,23 @@ class OtherPage(SettingsPage):
             self.language_combo.setCurrentText(language_manager.get_current_language())
         except Exception:
             self.language_combo.addItem("English_English")
-        add_row(language, "Language", self.language_combo)
+        self.language_label = add_row(self.language_card, "", self.language_combo)
 
-        about = self.add_card("About")
+        self.about_card = self.add_card(tr("about", "About"))
         self.version_label = QLabel(f"Axiom v{__version__}")
-        self.discord_btn = QPushButton("Discord")
-        self.github_btn = QPushButton("GitHub")
-        self.donate_btn = QPushButton("Donate")
-        add_row(about, "Version", self.version_label)
+        self.discord_btn = QPushButton()
+        self.github_btn = QPushButton()
+        self.donate_btn = QPushButton()
+        self.version_row_label = add_row(self.about_card, "", self.version_label)
         links = QWidget()
         links_layout = QHBoxLayout(links)
         links_layout.setContentsMargins(0, 0, 0, 0)
         links_layout.addWidget(self.discord_btn)
         links_layout.addWidget(self.github_btn)
         links_layout.addWidget(self.donate_btn)
-        add_row(about, "Links", links)
+        self.links_label = add_row(self.about_card, "", links)
         self.finish()
+        self.retranslateUi()
 
         self.show_console.toggled.connect(self._on_show_console)
         self.refresh_runtime_btn.clicked.connect(self._refresh_runtime)
@@ -921,12 +858,16 @@ class OtherPage(SettingsPage):
         window = self.window()
         if hasattr(window, "refreshRuntimeSettings"):
             token = window.refreshRuntimeSettings()
-            QMessageBox.information(self, "Runtime", f"Runtime refresh token: {token}")
+            QMessageBox.information(
+                self,
+                tr("runtime", "Runtime"),
+                tr("runtime_refresh_token", "Runtime refresh token: {token}").format(token=token),
+            )
 
     def _save_config(self) -> None:
         if self._config is not None:
             save_config(self._config)
-            QMessageBox.information(self, "Config", "Config saved.")
+            QMessageBox.information(self, tr("config_manager", "Config"), tr("config_saved", "Config saved."))
 
     def _exit_save(self) -> None:
         self._save_config()
@@ -937,8 +878,37 @@ class OtherPage(SettingsPage):
             from core.language_manager import language_manager
 
             language_manager.set_language(language)
+            window = self.window()
+            if hasattr(window, "_retranslateUi"):
+                window._retranslateUi()
         except Exception:
             pass
+
+    def retranslateUi(self) -> None:
+        self.title_label.setText(tr("other", "Other"))
+        for card, key, default in (
+            (self.program_card, "program", "Program"),
+            (self.language_card, "language", "Language"),
+            (self.about_card, "about", "About"),
+        ):
+            card.title_label.setText(tr(key, default))  # type: ignore[attr-defined]
+        self.refresh_runtime_btn.setText(tr("apply_runtime_settings", "Refresh Runtime Settings"))
+        self.save_btn.setText(tr("save_config", "Save Config"))
+        self.exit_btn.setText(tr("exit_and_save", "Exit and Save"))
+        self.discord_btn.setText(tr("discord", "Discord"))
+        self.github_btn.setText(tr("github", "GitHub"))
+        self.donate_btn.setText(tr("donate", "Donate"))
+        for label, key, default in (
+            (self.show_console_label, "show_console", "Show console"),
+            (self.refresh_runtime_label, "apply_runtime_settings", "Apply runtime settings"),
+            (self.save_config_label, "save_current_config", "Save current config"),
+            (self.exit_label, "exit", "Exit"),
+            (self.language_label, "language", "Language"),
+            (self.version_row_label, "version", "Version"),
+            (self.links_label, "links", "Links"),
+        ):
+            if label is not None:
+                label.setText(tr(key, default))
 
 
 class AxiomWindow(QMainWindow):
@@ -974,15 +944,15 @@ class AxiomWindow(QMainWindow):
         self.otherInterface = OtherPage(self)
 
         self._pages = [
-            ("Display", self.displayInterface),
-            ("Aim", self.aimInterface),
-            ("Trigger", self.triggerInterface),
-            ("Keys", self.keysInterface),
-            ("Configs", self.configInterface),
-            ("Other", self.otherInterface),
+            ("display", "Display", self.displayInterface),
+            ("aim", "Aim", self.aimInterface),
+            ("trigger", "Trigger", self.triggerInterface),
+            ("keys", "Keys", self.keysInterface),
+            ("configs", "Configs", self.configInterface),
+            ("other", "Other", self.otherInterface),
         ]
-        for label, page in self._pages:
-            self.nav.addItem(QListWidgetItem(label))
+        for key, default, page in self._pages:
+            self.nav.addItem(QListWidgetItem(tr(key, default)))
             self.stack.addWidget(page)
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.nav.setCurrentRow(1)
@@ -992,9 +962,10 @@ class AxiomWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             app.setProperty("axiom_dark_mode", bool(getattr(config, "dark_mode", False)))
-        for _, page in self._pages:
+        for _, _, page in self._pages:
             if hasattr(page, "setConfig"):
                 page.setConfig(config)
+        self._retranslateUi()
         self._applyThemeStyles()
         self._forceWindowsTitleBarColor(isDark=_is_dark(config))
 
@@ -1005,6 +976,15 @@ class AxiomWindow(QMainWindow):
     def _refreshAllPages(self) -> None:
         if self._config is not None:
             self.setConfig(self._config)
+
+    def _retranslateUi(self) -> None:
+        self.setWindowTitle(tr("window_title", f"Axiom v{__version__}"))
+        for index, (key, default, page) in enumerate(self._pages):
+            item = self.nav.item(index)
+            if item is not None:
+                item.setText(tr(key, default))
+            if hasattr(page, "retranslateUi"):
+                page.retranslateUi()
 
     def _refreshTriggerVisibility(self) -> None:
         self.triggerInterface.refreshVisibility()

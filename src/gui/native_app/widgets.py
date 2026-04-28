@@ -41,14 +41,15 @@ def make_card(title: str, parent: QWidget | None = None) -> QFrame:
 
     title_label = QLabel(title, card)
     title_label.setObjectName("groupTitle")
+    card.title_label = title_label  # type: ignore[attr-defined]
     layout.addWidget(title_label)
     return card
 
 
-def add_row(container: QFrame, label: str, widget: QWidget, description: str = "") -> None:
+def add_row(container: QFrame, label: str, widget: QWidget, description: str = "") -> QLabel | None:
     layout = container.layout()
     if not isinstance(layout, QVBoxLayout):
-        return
+        return None
 
     row = QWidget(container)
     row_layout = QHBoxLayout(row)
@@ -72,6 +73,7 @@ def add_row(container: QFrame, label: str, widget: QWidget, description: str = "
     row_layout.addWidget(text_box, 1)
     row_layout.addWidget(widget, 0, Qt.AlignmentFlag.AlignRight)
     layout.addWidget(row)
+    return label_widget
 
 
 class IntSliderSpin(QWidget):
@@ -175,33 +177,34 @@ class FloatSpin(QWidget):
 
 
 VK_NAMES = {
-    0x00: "None",
-    0x01: "Mouse Left",
-    0x02: "Mouse Right",
-    0x04: "Mouse Middle",
-    0x05: "Mouse X1",
-    0x06: "Mouse X2",
-    0x08: "Backspace",
-    0x09: "Tab",
-    0x0D: "Enter",
-    0x10: "Shift",
-    0x11: "Ctrl",
-    0x12: "Alt",
-    0x14: "CapsLock",
-    0x1B: "Esc",
-    0x20: "Space",
-    0x25: "Left",
-    0x26: "Up",
-    0x27: "Right",
-    0x28: "Down",
-    0x2D: "Insert",
-    0x2E: "Delete",
+    0x00: ("key_none", "None"),
+    0x01: ("key_mouse_left", "Mouse Left"),
+    0x02: ("key_mouse_right", "Mouse Right"),
+    0x04: ("key_mouse_middle", "Mouse Middle"),
+    0x05: ("key_mouse_x1", "Mouse X1"),
+    0x06: ("key_mouse_x2", "Mouse X2"),
+    0x08: ("key_backspace", "Backspace"),
+    0x09: ("key_tab", "Tab"),
+    0x0D: ("key_enter", "Enter"),
+    0x10: ("key_shift", "Shift"),
+    0x11: ("key_ctrl", "Ctrl"),
+    0x12: ("key_alt", "Alt"),
+    0x14: ("key_caps_lock", "Caps Lock"),
+    0x1B: ("key_esc", "Esc"),
+    0x20: ("key_space", "Space"),
+    0x25: ("key_left", "Left"),
+    0x26: ("key_up", "Up"),
+    0x27: ("key_right", "Right"),
+    0x28: ("key_down", "Down"),
+    0x2D: ("key_insert", "Insert"),
+    0x2E: ("key_delete", "Delete"),
 }
 
 
 def vk_to_name(vk_code: int) -> str:
     if vk_code in VK_NAMES:
-        return VK_NAMES[vk_code]
+        key, default = VK_NAMES[vk_code]
+        return tr(key, default)
     if 0x30 <= vk_code <= 0x39 or 0x41 <= vk_code <= 0x5A:
         return chr(vk_code)
     if 0x70 <= vk_code <= 0x7B:
@@ -238,12 +241,12 @@ class KeyBindButton(QPushButton):
 
     def _start_listening(self) -> None:
         self._listening = True
-        self.setText("Press key...")
+        self.setText(tr("key_press_to_bind", "Press a key..."))
         self.setFocus(Qt.FocusReason.MouseFocusReason)
 
     def _show_context_menu(self, pos) -> None:
         menu = QMenu(self)
-        clear_action = QAction("Clear", self)
+        clear_action = QAction(tr("key_clear", "Clear Binding"), self)
         clear_action.triggered.connect(self._clear_binding)
         menu.addAction(clear_action)
         menu.exec(self.mapToGlobal(pos))
@@ -335,9 +338,9 @@ class SettingsPage(QWidget):
         self.content_layout.setContentsMargins(24, 22, 24, 22)
         self.content_layout.setSpacing(14)
 
-        title_label = QLabel(title, self.content)
-        title_label.setObjectName("pageTitle")
-        self.content_layout.addWidget(title_label)
+        self.title_label = QLabel(title, self.content)
+        self.title_label.setObjectName("pageTitle")
+        self.content_layout.addWidget(self.title_label)
 
         self.scroll.setWidget(self.content)
         root.addWidget(self.scroll)

@@ -174,22 +174,15 @@ def start_ai_threads(
 def main():
     config = Config()
     load_config(config)
-    logger.info("Loaded config mouse move method: %s", config.mouse_move_method)
+    try:
+        from win_utils.ddxoft_mouse import ensure_ddxoft_ready, test_ddxoft_functions
 
-    if config.mouse_move_method == "ddxoft":
-        try:
-            from win_utils.ddxoft_mouse import ensure_ddxoft_ready, test_ddxoft_functions
-
-            if ensure_ddxoft_ready():
-                test_ddxoft_functions()
-            else:
-                logger.warning("ddxoft init failed, falling back to mouse_event")
-                config.mouse_move_method = "mouse_event"
-                config.mouse_click_method = "mouse_event"
-        except Exception as e:
-            logger.warning("ddxoft init raised exception, falling back to mouse_event: %s", e)
-            config.mouse_move_method = "mouse_event"
-            config.mouse_click_method = "mouse_event"
+        if ensure_ddxoft_ready():
+            test_ddxoft_functions()
+        else:
+            logger.warning("ddxoft init failed; mouse moves will be silently dropped until DLL is available")
+    except Exception as e:
+        logger.warning("ddxoft init raised exception: %s", e)
 
     overlay_queue: queue.Queue = queue.Queue(maxsize=config.max_queue_size)
     auto_fire_boxes_queue: queue.Queue = queue.Queue(maxsize=config.max_queue_size)

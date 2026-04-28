@@ -176,13 +176,13 @@ class CalibrateAimRatioTests(unittest.TestCase):
                 lambda dx, dy, method: moves.append((dx, dy, method)),
                 mouse_counts=100,
                 samples=2,
-                mouse_method="mouse_event",
+                mouse_method="ddxoft",
                 settle_s=0.0,
                 roi_fraction=0.65,
                 auto_tune=False,
             )
 
-        self.assertEqual(moves, [(100, 0, "mouse_event"), (-100, 0, "mouse_event")] * 2)
+        self.assertEqual(moves, [(100, 0, "ddxoft"), (-100, 0, "ddxoft")] * 2)
         self.assertEqual(result.axis, "x")
         self.assertEqual(result.samples, (25.0, 35.0, 45.0, 55.0))
         self.assertAlmostEqual(result.median_shift_px, 40.0)
@@ -204,13 +204,13 @@ class CalibrateAimRatioTests(unittest.TestCase):
                 lambda dx, dy, method: moves.append((dx, dy, method)),
                 mouse_counts=80,
                 samples=1,
-                mouse_method="sendinput",
+                mouse_method="ddxoft",
                 settle_s=0.0,
                 roi_fraction=0.65,
                 auto_tune=False,
             )
 
-        self.assertEqual(moves, [(0, 80, "sendinput"), (0, -80, "sendinput")])
+        self.assertEqual(moves, [(0, 80, "ddxoft"), (0, -80, "ddxoft")])
         self.assertEqual(result.axis, "y")
         self.assertEqual(result.samples, (40.0, 50.0))
         self.assertAlmostEqual(result.median_shift_px, 45.0)
@@ -235,12 +235,12 @@ class CalibrateAimRatioTests(unittest.TestCase):
                 lambda dx, dy, method: moves.append((dx, dy, method)),
                 mouse_counts=50,
                 samples=1,
-                mouse_method="mouse_event",
+                mouse_method="ddxoft",
                 settle_s=0.0,
                 roi_fraction=1.0,
             )
 
-        self.assertEqual(moves, [(50, 0, "mouse_event"), (-50, 0, "mouse_event"), (100, 0, "mouse_event"), (-100, 0, "mouse_event")])
+        self.assertEqual(moves, [(50, 0, "ddxoft"), (-50, 0, "ddxoft"), (100, 0, "ddxoft"), (-100, 0, "ddxoft")])
         self.assertEqual(result.mouse_counts, 100)
         self.assertEqual(result.samples, (20.0, 20.0))
         self.assertAlmostEqual(result.ratio, 0.2)
@@ -264,12 +264,12 @@ class CalibrateAimRatioTests(unittest.TestCase):
                 lambda dx, dy, method: moves.append((dx, dy, method)),
                 mouse_counts=100,
                 samples=1,
-                mouse_method="mouse_event",
+                mouse_method="ddxoft",
                 settle_s=0.0,
                 roi_fraction=1.0,
             )
 
-        self.assertEqual(moves, [(100, 0, "mouse_event"), (-100, 0, "mouse_event"), (50, 0, "mouse_event"), (-50, 0, "mouse_event")])
+        self.assertEqual(moves, [(100, 0, "ddxoft"), (-100, 0, "ddxoft"), (50, 0, "ddxoft"), (-50, 0, "ddxoft")])
         self.assertEqual(result.mouse_counts, 50)
         self.assertEqual(result.samples, (100.0, 100.0))
         self.assertAlmostEqual(result.ratio, 2.0)
@@ -319,18 +319,6 @@ class CalibrateAimRatioTests(unittest.TestCase):
             updated = json.load(handle)
         self.assertAlmostEqual(updated["aim_pixel_ratio_x"], 0.3)
         self.assertAlmostEqual(updated["aim_pixel_ratio_y"], 0.4)
-
-    def test_run_calibration_rejects_xbox_backend_before_creating_camera(self) -> None:
-        config_path = self._temporary_config_path()
-        with open(config_path, "w", encoding="utf-8") as handle:
-            json.dump({"mouse_move_method": "xbox"}, handle)
-        args = calibrator.build_parser().parse_args(["--config", config_path, "--countdown", "0"])
-
-        with mock.patch.object(calibrator, "create_dxcam_camera") as create_camera:
-            with self.assertRaises(RuntimeError):
-                calibrator.run_calibration(args)
-
-        create_camera.assert_not_called()
 
 
 if __name__ == "__main__":
