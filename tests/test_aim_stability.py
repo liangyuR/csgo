@@ -54,12 +54,13 @@ fake_mss.exception = types.SimpleNamespace(ScreenShotError=RuntimeError)
 fake_mss.mss = lambda: None
 sys.modules.setdefault("mss", fake_mss)
 
+from core.ai_loop import _build_runtime_settings as build_detection_runtime_settings
 from core.ai_loop import _calculate_detection_region
 from core.config import apply_model_constraints, bump_runtime_refresh_token, migrate_config_data
 from core.control_loop import ControlLoopState, _select_target, run_control_step
 from core.detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
 from core.inference import PIDController, preprocess_image
-from core.model_registry import resolve_model_spec_from_path
+from core.model_registry import get_default_model_spec, resolve_model_spec_from_path
 from core.smart_tracker import SmartTracker
 
 
@@ -184,6 +185,14 @@ class AimStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(config.aim_pixel_ratio_y, 1.0)
         self.assertFalse(config.tracker_use_acceleration)
         self.assertEqual(config.controller_version, 3)
+
+    def test_detection_runtime_defaults_to_stricter_min_confidence(self) -> None:
+        settings = build_detection_runtime_settings(
+            SimpleNamespace(width=1920, height=1080),
+            get_default_model_spec(),
+        )
+
+        self.assertAlmostEqual(settings.min_confidence, 0.30)
 
     def test_runtime_refresh_token_helper_increments_monotonically(self) -> None:
         config = SimpleNamespace(runtime_refresh_token=0)

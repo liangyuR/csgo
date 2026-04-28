@@ -322,6 +322,83 @@ class ControlLoopCompensationTests(unittest.TestCase):
         self.assertFalse(target_changed)
         self.assertFalse(hold_lock)
 
+    def test_select_target_discards_tiny_noise_boxes(self) -> None:
+        config = self._make_config()
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [99.0, 99.0, 104.0, 104.0],
+                [112.0, 94.0, 132.0, 114.0],
+            ],
+            confidences=[0.99, 0.75],
+            class_ids=[0, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (112.0, 94.0, 132.0, 114.0))
+        self.assertEqual((target_x, target_y), (122.0, 104.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
+    def test_select_target_rejects_unstable_first_lock_jump(self) -> None:
+        config = self._make_config(lock_retain_radius_px=20.0, lock_retain_time_s=0.2)
+        state = ControlLoopState(last_candidate_x=100.0, last_candidate_y=100.0, last_candidate_perf=1.0)
+        payload = DetectionPayload(
+            boxes=[[180.0, 90.0, 200.0, 110.0]],
+            confidences=[0.95],
+            class_ids=[0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.05,
+        )
+
+        self.assertIsNone(selected_box)
+        self.assertIsNone(target_x)
+        self.assertIsNone(target_y)
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+        self.assertEqual((state.last_candidate_x, state.last_candidate_y), (190.0, 100.0))
+
+    def test_select_target_area_weight_weakens_small_far_noise(self) -> None:
+        config = self._make_config()
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [118.0, 98.0, 126.0, 106.0],
+                [110.0, 90.0, 150.0, 130.0],
+            ],
+            confidences=[0.95, 0.95],
+            class_ids=[0, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (110.0, 90.0, 150.0, 130.0))
+        self.assertEqual((target_x, target_y), (130.0, 110.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
     def test_self_motion_is_removed_from_tracker_velocity(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
         state = ControlLoopState(cached_mouse_move_method="mouse_event")

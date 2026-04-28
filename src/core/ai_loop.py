@@ -91,7 +91,7 @@ def _build_runtime_settings(config: Config, model_spec: ModelSpec) -> DetectionR
             float(getattr(config, "idle_detect_interval", getattr(config, "detect_interval", 0.05)) or 0.05),
             0.001,
         ),
-        min_confidence=float(getattr(config, "min_confidence", 0.11)),
+        min_confidence=float(getattr(config, "min_confidence", 0.30)),
         keep_detecting=bool(getattr(config, "keep_detecting", True)),
         always_aim=bool(getattr(config, "always_aim", False)),
         fov_follow_mouse=bool(getattr(config, "fov_follow_mouse", True)),

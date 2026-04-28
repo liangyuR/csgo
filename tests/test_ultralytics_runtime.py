@@ -36,6 +36,13 @@ class _FakeBoxes:
         self.cls = _FakeTensor([1.0, 3.0])
 
 
+class _CustomBoxes:
+    def __init__(self, xyxy, conf, cls):
+        self.xyxy = _FakeTensor(xyxy)
+        self.conf = _FakeTensor(conf)
+        self.cls = _FakeTensor(cls)
+
+
 class _FakeResult:
     def __init__(self, boxes):
         self.boxes = boxes
@@ -125,6 +132,41 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         self.assertEqual(payload.class_ids.tolist(), [3])
         self.assertEqual(model._model.predict_calls[0]["classes"], [3])
         self.assertEqual(model._model.predict_calls[0]["max_det"], 16)
+
+    def test_detect_filters_partial_fov_boxes_by_center_or_half_coverage(self) -> None:
+        class _FovYOLO(_FakeYOLO):
+            def predict(self, **kwargs):
+                self.predict_calls.append(kwargs)
+                boxes = _CustomBoxes(
+                    xyxy=[
+                        [0.0, 0.0, 80.0, 80.0],
+                        [40.0, 40.0, 80.0, 80.0],
+                        [120.0, 120.0, 150.0, 150.0],
+                    ],
+                    conf=[0.95, 0.85, 0.75],
+                    cls=[0.0, 0.0, 0.0],
+                )
+                return [_FakeResult(boxes)]
+
+        fake_module = types.SimpleNamespace(YOLO=_FovYOLO)
+
+        with mock.patch("core.ultralytics_runtime.importlib.import_module", return_value=fake_module):
+            model = UltralyticsEngineModel("Model/test.engine", input_size=640)
+
+        payload = model.detect(
+            np.zeros((32, 32, 3), dtype=np.uint8),
+            min_confidence=0.25,
+            fov_bounds=(50, 50, 100, 100),
+        )
+
+        np.testing.assert_allclose(
+            payload.boxes,
+            np.array([[40.0, 40.0, 80.0, 80.0]], dtype=np.float32),
+            rtol=0.0,
+            atol=1e-6,
+        )
+        self.assertFloatListAlmostEqual(payload.confidences.tolist(), [0.85])
+        self.assertEqual(payload.class_ids.tolist(), [0])
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ todos:
     status: completed
   - id: phase3-detection
     content: 阶段3：min_confidence 上调、锁定一致性门槛、半穿框过滤、面积阈值、_ACQUIRE_MATCH_FRAMES 上调
-    status: pending
+    status: completed
   - id: phase3-optional-yolo12m
     content: 可选：给出 yolo12m_cs2.pt → .engine 导出说明与 GUI 切换（不作默认）
     status: pending
