@@ -10,7 +10,7 @@ todos:
     status: completed
   - id: phase2-prediction
     content: 阶段2：_update_tracker_targets 同步使用 effective lead；提高 _DYNAMIC_PREDICTION_MAX_DISTANCE_PX 与 prediction_max_distance_px 默认；SmartTracker 加 a_x/a_y 二阶项 + tracker_use_acceleration 开关
-    status: in_progress
+    status: completed
   - id: phase2-smoothing
     content: 阶段2：调高 target_point_smoothing_alpha / _TRACK_MIN_ALPHA / velocity_ema_alpha / prediction_lead_time_s 默认值
     status: completed

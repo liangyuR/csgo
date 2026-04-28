@@ -91,6 +91,7 @@ def _make_frame(sequence: int, crosshair_x: int, crosshair_y: int, payload: Dete
 class AimPixelRatioTests(unittest.TestCase):
     def setUp(self) -> None:
         _moves.clear()
+        control_loop_module.send_mouse_move = _record_move
 
     def test_acquire_stage_never_overshoots_remaining_error(self) -> None:
         """Acquire stage no longer permits explicit overshoot. Even with a high

@@ -48,6 +48,7 @@ control_loop_module.send_mouse_move = _record_move
 class ControlLoopCompensationTests(unittest.TestCase):
     def setUp(self) -> None:
         _moves.clear()
+        control_loop_module.send_mouse_move = _record_move
 
     def _make_config(self, **overrides):
         defaults = {
@@ -85,10 +86,11 @@ class ControlLoopCompensationTests(unittest.TestCase):
         crosshair_x: int,
         crosshair_y: int,
         payload: DetectionPayload,
+        captured_perf: float = 0.0,
     ) -> DetectionFrame:
         return DetectionFrame(
             sequence=sequence,
-            captured_perf=0.0,
+            captured_perf=captured_perf,
             crosshair_x=crosshair_x,
             crosshair_y=crosshair_y,
             aiming_active=True,
@@ -424,6 +426,62 @@ class ControlLoopCompensationTests(unittest.TestCase):
         self.assertTrue(state.tracker_active)
         self.assertIsNotNone(fresh_prediction_x)
         self.assertGreater(state.control_target_x, fresh_prediction_x)
+
+    def test_fresh_detection_prediction_includes_target_age(self) -> None:
+        def run_sequence(capture_lag_s: float) -> float:
+            config = self._make_config(
+                aim_position_deadzone_px=0.0,
+                velocity_deadzone_px_per_s=0.0,
+                prediction_lead_time_s=0.02,
+                prediction_max_distance_px=80.0,
+            )
+            state = ControlLoopState(cached_mouse_move_method="mouse_event")
+            pid_x = PIDController(0.2, 0.0, 0.0)
+            pid_y = PIDController(0.2, 0.0, 0.0)
+            frames = [
+                self._make_frame(
+                    1,
+                    100,
+                    100,
+                    DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+                    captured_perf=1.0,
+                ),
+                self._make_frame(
+                    2,
+                    100,
+                    100,
+                    DetectionPayload(boxes=[[120.0, 90.0, 140.0, 110.0]], confidences=[0.9], class_ids=[0]),
+                    captured_perf=1.005,
+                ),
+                self._make_frame(
+                    3,
+                    100,
+                    100,
+                    DetectionPayload(boxes=[[130.0, 90.0, 150.0, 110.0]], confidences=[0.9], class_ids=[0]),
+                    captured_perf=1.01,
+                ),
+            ]
+
+            for frame in frames:
+                run_control_step(
+                    config,
+                    state,
+                    pid_x,
+                    pid_y,
+                    frame,
+                    frame.captured_perf + capture_lag_s,
+                    frame.captured_perf + capture_lag_s,
+                    0.005,
+                )
+
+            self.assertTrue(state.tracker_active)
+            self.assertIsNotNone(state.control_target_x)
+            return state.control_target_x
+
+        fresh_prediction_x = run_sequence(0.0)
+        aged_prediction_x = run_sequence(0.02)
+
+        self.assertGreater(aged_prediction_x, fresh_prediction_x)
 
     def test_tracker_moves_on_prediction_when_measured_target_is_inside_deadzone(self) -> None:
         config = self._make_config(

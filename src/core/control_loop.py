@@ -137,17 +137,17 @@ def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
         sticky_target_enabled=bool(getattr(config, "sticky_target_enabled", True)),
         lock_retain_radius_px=max(float(getattr(config, "lock_retain_radius_px", 48.0)), 0.0),
         lock_retain_time_s=max(float(getattr(config, "lock_retain_time_s", 0.12)), 0.0),
-        target_point_smoothing_alpha=min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0),
+        target_point_smoothing_alpha=min(max(float(getattr(config, "target_point_smoothing_alpha", 0.55)), 0.0), 1.0),
         tracker_enabled=bool(getattr(config, "tracker_enabled", False)),
-        prediction_lead_time_s=max(float(getattr(config, "prediction_lead_time_s", 0.018)), 0.0),
-        velocity_ema_alpha=min(max(float(getattr(config, "velocity_ema_alpha", 0.45)), 0.0), 1.0),
+        prediction_lead_time_s=max(float(getattr(config, "prediction_lead_time_s", 0.024)), 0.0),
+        velocity_ema_alpha=min(max(float(getattr(config, "velocity_ema_alpha", 0.6)), 0.0), 1.0),
         velocity_deadzone_px_per_s=max(float(getattr(config, "velocity_deadzone_px_per_s", 10.0)), 0.0),
         screen_motion_compensation_enabled=bool(getattr(config, "screen_motion_compensation_enabled", True)),
         screen_motion_compensation_ratio=min(
             max(float(getattr(config, "screen_motion_compensation_ratio", 1.0)), 0.0),
             1.5,
         ),
-        prediction_max_distance_px=max(float(getattr(config, "prediction_max_distance_px", 20.0)), 0.0),
+        prediction_max_distance_px=max(float(getattr(config, "prediction_max_distance_px", 80.0)), 0.0),
         aim_position_deadzone_px=max(float(getattr(config, "aim_position_deadzone_px", 3.0)), 0.0),
         bezier_curve_enabled=bool(getattr(config, "bezier_curve_enabled", False)),
         bezier_curve_strength=float(getattr(config, "bezier_curve_strength", 0.35)),
@@ -299,7 +299,7 @@ def _get_target_smoothing_alpha(
     if settings is not None:
         base_alpha = settings.target_point_smoothing_alpha
     else:
-        base_alpha = min(max(float(getattr(config, "target_point_smoothing_alpha", 0.35)), 0.0), 1.0)
+        base_alpha = min(max(float(getattr(config, "target_point_smoothing_alpha", 0.55)), 0.0), 1.0)
     distance = math.hypot(target_x - crosshair_x, target_y - crosshair_y)
     stage = _determine_control_stage(state, distance, current_time)
     if stage == "acquire":

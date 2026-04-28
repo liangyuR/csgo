@@ -115,8 +115,8 @@ class ConfigManager:
                 "xbox_deadzone": getattr(config_instance, "xbox_deadzone", 0.05),
                 "xbox_auto_connect": getattr(config_instance, "xbox_auto_connect", True),
                 "tracker_enabled": getattr(config_instance, "tracker_enabled", True),
-                "prediction_lead_time_s": getattr(config_instance, "prediction_lead_time_s", 0.018),
-                "velocity_ema_alpha": getattr(config_instance, "velocity_ema_alpha", 0.45),
+                "prediction_lead_time_s": getattr(config_instance, "prediction_lead_time_s", 0.024),
+                "velocity_ema_alpha": getattr(config_instance, "velocity_ema_alpha", 0.6),
                 "velocity_deadzone_px_per_s": getattr(config_instance, "velocity_deadzone_px_per_s", 10.0),
                 "screen_motion_compensation_enabled": getattr(
                     config_instance,
@@ -136,8 +136,9 @@ class ConfigManager:
                 "aim_position_deadzone_px": getattr(config_instance, "aim_position_deadzone_px", 3.0),
                 "lock_retain_radius_px": getattr(config_instance, "lock_retain_radius_px", 48.0),
                 "lock_retain_time_s": getattr(config_instance, "lock_retain_time_s", 0.12),
-                "target_point_smoothing_alpha": getattr(config_instance, "target_point_smoothing_alpha", 0.35),
-                "prediction_max_distance_px": getattr(config_instance, "prediction_max_distance_px", 20.0),
+                "target_point_smoothing_alpha": getattr(config_instance, "target_point_smoothing_alpha", 0.55),
+                "prediction_max_distance_px": getattr(config_instance, "prediction_max_distance_px", 80.0),
+                "tracker_use_acceleration": getattr(config_instance, "tracker_use_acceleration", False),
                 "control_stale_hold_ms": getattr(config_instance, "control_stale_hold_ms", 12.0),
                 "control_stale_decay_ms": getattr(config_instance, "control_stale_decay_ms", 24.0),
             }
