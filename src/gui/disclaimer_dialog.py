@@ -2,7 +2,6 @@ import os
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTextBrowser, QPushButton, 
                              QHBoxLayout, QLabel, QWidget)
 from PyQt6.QtCore import Qt, QSize
-from qfluentwidgets import PrimaryPushButton, PushButton, StrongBodyLabel
 
 class DisclaimerDialog(QDialog):
     def __init__(self, parent=None):
@@ -24,7 +23,7 @@ class DisclaimerDialog(QDialog):
         layout.setSpacing(20)
         
         # Title
-        title_label = StrongBodyLabel("Disclaimer / Terms of Use", self)
+        title_label = QLabel("Disclaimer / Terms of Use", self)
         title_label.setStyleSheet("font-size: 24px; font-weight: bold;")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
@@ -49,11 +48,12 @@ class DisclaimerDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(20)
         
-        self.btn_exit = PushButton("Decline & Exit")
+        self.btn_exit = QPushButton("Decline & Exit")
         self.btn_exit.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_exit.clicked.connect(self.reject)
         
-        self.btn_agree = PrimaryPushButton("I Agree")
+        self.btn_agree = QPushButton("I Agree")
+        self.btn_agree.setDefault(True)
         self.btn_agree.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_agree.clicked.connect(self.accept)
         

@@ -10,13 +10,6 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
-try:
-    from gui.fluent_app.theme_colors import ThemeColors
-
-    HAS_THEME_COLORS = True
-except ImportError:
-    HAS_THEME_COLORS = False
-
 if TYPE_CHECKING:
     from core.config import Config
     from core.detection_state import DetectionPayload
@@ -26,31 +19,31 @@ if TYPE_CHECKING:
 class OverlayColors:
     @staticmethod
     def get_fov_color() -> QColor:
-        return ThemeColors.OVERLAY_FOV.qcolor() if HAS_THEME_COLORS else QColor(255, 0, 0, 180)
+        return QColor(255, 0, 0, 180)
 
     @staticmethod
     def get_box_color() -> QColor:
-        return ThemeColors.OVERLAY_BOX.qcolor() if HAS_THEME_COLORS else QColor(0, 255, 0, 200)
+        return QColor(0, 255, 0, 200)
 
     @staticmethod
     def get_confidence_text_color() -> QColor:
-        return ThemeColors.OVERLAY_CONFIDENCE_TEXT.qcolor() if HAS_THEME_COLORS else QColor(255, 255, 0, 220)
+        return QColor(255, 255, 0, 220)
 
     @staticmethod
     def get_detect_range_color() -> QColor:
-        return ThemeColors.OVERLAY_DETECT_RANGE.qcolor() if HAS_THEME_COLORS else QColor(0, 140, 255, 90)
+        return QColor(0, 140, 255, 90)
 
     @staticmethod
     def get_tracker_line_color() -> QColor:
-        return ThemeColors.OVERLAY_TRACKER_LINE.qcolor() if HAS_THEME_COLORS else QColor(255, 255, 255, 50)
+        return QColor(255, 255, 255, 50)
 
     @staticmethod
     def get_tracker_current_color() -> QColor:
-        return ThemeColors.OVERLAY_TRACKER_CURRENT.qcolor() if HAS_THEME_COLORS else QColor(0, 255, 255, 60)
+        return QColor(0, 255, 255, 60)
 
     @staticmethod
     def get_tracker_predicted_color() -> QColor:
-        return ThemeColors.OVERLAY_TRACKER_PREDICTED.qcolor() if HAS_THEME_COLORS else QColor(255, 0, 255, 80)
+        return QColor(255, 0, 255, 80)
 
 
 class PyQtOverlay(QWidget):

@@ -240,7 +240,7 @@ def main():
             sys.exit(0)
 
     if not config.first_run_complete:
-        from gui.fluent_app.setup_wizard import SetupWizard
+        from gui.native_app.setup_wizard import SetupWizard
 
         wizard = SetupWizard(config)
         wizard.exec()
@@ -264,8 +264,10 @@ def main():
     else:
         hide_console()
 
+    app.setProperty("axiom_dark_mode", bool(getattr(config, "dark_mode", False)))
+
     from core.config_manager import ConfigManager
-    from gui.fluent_app.window import AxiomWindow
+    from gui.native_app.window import AxiomWindow
 
     settings_window = AxiomWindow()
     settings_window.setConfig(config)

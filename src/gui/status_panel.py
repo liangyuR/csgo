@@ -1,6 +1,6 @@
 # status_panel.py
 """
-Fluent Design 風格的狀態面板 (Redesigned)
+Native Qt UI  風格的狀態面板 (Redesigned)
 使用 QLayout 和 QWidget 進行排版，提供更現代、整齊的視覺效果
 支援 Windows Acrylic 毛玻璃效果
 """
@@ -17,21 +17,15 @@ from PyQt6.QtCore import Qt, QTimer, QSize, pyqtSignal
 
 from core.language_manager import get_text, language_manager
 
-# 嘗試導入 qfluentwidgets 的主題函數
-try:
-    from qfluentwidgets import isDarkTheme, themeColor
-    HAS_FLUENT_WIDGETS = True
-except ImportError:
-    HAS_FLUENT_WIDGETS = False
-    def isDarkTheme():
-        return True  # 預設深色主題
+# Theme detection follows the native Qt application property.
 
-# 導入主題顏色定義
-try:
-    from gui.fluent_app.theme_colors import ThemeColors, to_css_rgba
-    HAS_THEME_COLORS = True
-except ImportError:
-    HAS_THEME_COLORS = False
+def isDarkTheme():
+    app = QApplication.instance()
+    if app is not None:
+        value = app.property("axiom_dark_mode")
+        if value is not None:
+            return bool(value)
+    return True
 
 # --- Win32 Acrylic 效果所需的結構體 ---
 class _ACCENT_POLICY(ctypes.Structure):
@@ -62,10 +56,10 @@ _WCA_ACCENT_POLICY = 19
 _ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 _ACCENT_DISABLED = 0
 
-# --- Fluent Design 顏色方案 ---
-class FluentColors:
-    """Fluent Design 配色方案 - 支持深色/淺色主題
-    現已整合 ThemeColors 模組的統一顏色定義
+# --- Native Qt UI  顏色方案 ---
+class NativeColors:
+    """Native Qt UI  配色方案 - 支持深色/淺色主題
+    現已整合 LocalColors 模組的統一顏色定義
     """
     
     @staticmethod
@@ -74,8 +68,6 @@ class FluentColors:
 
     @staticmethod
     def get_background_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.PANEL_BACKGROUND.qcolor()
         if isDarkTheme():
             return QColor(30, 30, 30, 255)  # 深色主題背景
         else:
@@ -83,38 +75,26 @@ class FluentColors:
 
     @staticmethod
     def get_text_primary_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.TEXT_PRIMARY.qcolor()
         return QColor(255, 255, 255) if isDarkTheme() else QColor(26, 26, 26)
         
     @staticmethod
     def get_text_secondary_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.TEXT_SECONDARY.qcolor()
         return QColor(160, 160, 160) if isDarkTheme() else QColor(90, 90, 90)
 
     @staticmethod
     def get_border_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.PANEL_BORDER.qcolor()
         return QColor(255, 255, 255, 20) if isDarkTheme() else QColor(0, 0, 0, 15)
 
     @staticmethod
     def get_accent_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.ACCENT.qcolor()
         return QColor(0, 122, 255)  # macOS Blue
     
     @staticmethod
     def get_success_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.SUCCESS.qcolor()
         return QColor(52, 199, 89) if not isDarkTheme() else QColor(50, 215, 75)
     
     @staticmethod
     def get_error_color():
-        if HAS_THEME_COLORS:
-            return ThemeColors.ERROR.qcolor()
         return QColor(255, 59, 48) if not isDarkTheme() else QColor(255, 69, 58)
          
     # 保持向後兼容的靜態屬性
@@ -127,9 +107,9 @@ class FluentColors:
         return self.get_error_color()
 
 # 創建全局實例用於屬性訪問
-_fluent_colors_instance = FluentColors()
-FluentColors.SUCCESS = _fluent_colors_instance.get_success_color()
-FluentColors.ERROR = _fluent_colors_instance.get_error_color()
+_native_colors_instance = NativeColors()
+NativeColors.SUCCESS = _native_colors_instance.get_success_color()
+NativeColors.ERROR = _native_colors_instance.get_error_color()
 
 class StatusIndicator(QWidget):
     """一個簡單的圓點狀態指示器"""
@@ -137,11 +117,11 @@ class StatusIndicator(QWidget):
         super().__init__(parent)
         self.setFixedSize(10, 10) # Slightly smaller
         self._active = False
-        self._color = FluentColors.ERROR
+        self._color = NativeColors.ERROR
         
     def set_status(self, active: bool):
         self._active = active
-        self._color = FluentColors.SUCCESS if active else FluentColors.ERROR
+        self._color = NativeColors.SUCCESS if active else NativeColors.ERROR
         self.update()
 
     def paintEvent(self, event):
@@ -551,9 +531,9 @@ class StatusPanel(QWidget):
 
     def _update_style(self):
         """更新 QSS 樣式表"""
-        text_primary = FluentColors.to_css_rgba(FluentColors.get_text_primary_color())
-        text_secondary = FluentColors.to_css_rgba(FluentColors.get_text_secondary_color())
-        border_color = FluentColors.to_css_rgba(FluentColors.get_border_color())
+        text_primary = NativeColors.to_css_rgba(NativeColors.get_text_primary_color())
+        text_secondary = NativeColors.to_css_rgba(NativeColors.get_text_secondary_color())
+        border_color = NativeColors.to_css_rgba(NativeColors.get_border_color())
         
         # 根據 Acrylic 是否啟用決定容器背景
         if self._acrylic_enabled:
@@ -564,8 +544,8 @@ class StatusPanel(QWidget):
             container_radius = 0
         else:
             # Acrylic 停用時：使用不透明背景 + 圓角
-            bg_color_obj = FluentColors.get_background_color()
-            container_bg = FluentColors.to_css_rgba(bg_color_obj)
+            bg_color_obj = NativeColors.get_background_color()
+            container_bg = NativeColors.to_css_rgba(bg_color_obj)
             container_border = f"1px solid {border_color}"
             container_radius = self.BORDER_RADIUS
         
@@ -657,11 +637,11 @@ class StatusPanel(QWidget):
         # 更新 Auto Aim
         if current_aim:
             self.aim_status_label.setText(get_text("status_panel_on"))
-            self.aim_status_label.setStyleSheet(f"color: {FluentColors.to_css_rgba(FluentColors.SUCCESS)};")
+            self.aim_status_label.setStyleSheet(f"color: {NativeColors.to_css_rgba(NativeColors.SUCCESS)};")
             self.aim_indicator.set_status(True)
         else:
             self.aim_status_label.setText(get_text("status_panel_off"))
-            self.aim_status_label.setStyleSheet(f"color: {FluentColors.to_css_rgba(FluentColors.ERROR)};")
+            self.aim_status_label.setStyleSheet(f"color: {NativeColors.to_css_rgba(NativeColors.ERROR)};")
             self.aim_indicator.set_status(False)
         self.aim_text_label.setText(get_text('auto_aim'))
 
@@ -688,10 +668,10 @@ class StatusPanel(QWidget):
                 from win_utils import ddxoft_mouse
                 if ddxoft_mouse.is_available():
                     disp_method += " ✓"
-                    method_color = FluentColors.to_css_rgba(FluentColors.SUCCESS)
+                    method_color = NativeColors.to_css_rgba(NativeColors.SUCCESS)
                 else:
                     disp_method += " ✗"
-                    method_color = FluentColors.to_css_rgba(FluentColors.ERROR)
+                    method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
             except ImportError:
                  pass
         elif current_method == 'xbox':
@@ -699,13 +679,13 @@ class StatusPanel(QWidget):
                 from win_utils import is_xbox_connected
                 if is_xbox_connected():
                     disp_method += " ✓"
-                    method_color = FluentColors.to_css_rgba(FluentColors.SUCCESS)
+                    method_color = NativeColors.to_css_rgba(NativeColors.SUCCESS)
                 else:
                     disp_method += " ✗"
-                    method_color = FluentColors.to_css_rgba(FluentColors.ERROR)
+                    method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
             except ImportError:
                 disp_method += " ✗"
-                method_color = FluentColors.to_css_rgba(FluentColors.ERROR)
+                method_color = NativeColors.to_css_rgba(NativeColors.ERROR)
         
         self.mouse_row.label.setText(get_text('mouse_move_method'))
         self.mouse_row.set_value(disp_method, method_color)
