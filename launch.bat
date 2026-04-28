@@ -141,6 +141,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Install CUDA PyTorch before requirements.txt: ultralytics pulls torch from PyPI
+rem by default, which is often CPU-only. Match :check_torch_cuda (cu130).
+echo Installing PyTorch with CUDA ^(cu130^) from pytorch.org wheels...
+"%AXIOM_VENV_PYTHON%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+if errorlevel 1 (
+    echo Failed to install CUDA PyTorch. Check GPU driver / CUDA compatibility, or install manually.
+    exit /b 1
+)
+
 "%AXIOM_VENV_PYTHON%" -m pip install -r "%AXIOM_REQUIREMENTS%"
 if errorlevel 1 (
     echo Failed to install dependencies from "%AXIOM_REQUIREMENTS%".
