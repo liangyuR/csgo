@@ -28,6 +28,22 @@ class ModelSpec:
         return list(self.labels)
 
 
+CS2_YOLO11M = ModelSpec(
+    model_id="yolo11m_cs2",
+    display_name="YOLO11M CS2",
+    engine_path="Model/yolo11m_cs2.engine",
+    input_size=640,
+    labels=["c", "ch", "t", "th"],
+    class_to_semantic={
+        "c": "body",
+        "ch": "head",
+        "t": "body",
+        "th": "head",
+    },
+    legacy_paths=["Model/yolo11m_cs2.onnx", "Model/yolo11m_cs2.pt"],
+    lock_detect_range_to_input=True,
+)
+
 CS2_YOLO12M = ModelSpec(
     model_id="yolo12m_cs2",
     display_name="YOLO12M CS2",
@@ -62,6 +78,7 @@ CS2_YOLO12N = ModelSpec(
 
 
 MODEL_REGISTRY: Dict[str, ModelSpec] = {
+    CS2_YOLO11M.model_id: CS2_YOLO11M,
     CS2_YOLO12M.model_id: CS2_YOLO12M,
     CS2_YOLO12N.model_id: CS2_YOLO12N,
 }

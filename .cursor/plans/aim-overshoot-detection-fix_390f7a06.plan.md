@@ -22,7 +22,7 @@ todos:
     status: pending
   - id: phase4-calibration
     content: 阶段4：新增 tools/calibrate_aim_ratio.py（dxcam + send_mouse_move + 相位相关）并写回 config.json
-    status: pending
+    status: completed
   - id: phase4-gui-button
     content: 可选：status_panel 加「灵敏度校准」按钮，单独 PR
     status: pending
