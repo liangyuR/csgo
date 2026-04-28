@@ -215,9 +215,10 @@ def _update_queues(
     overlay_queue: queue.Queue,
     auto_fire_queue: queue.Queue | None,
     payload: DetectionPayload,
+    captured_perf: float,
 ) -> None:
     _replace_queue_payload(overlay_queue, payload)
-    _replace_queue_payload(auto_fire_queue, payload)
+    _replace_queue_payload(auto_fire_queue, (payload, captured_perf))
 
 
 def _update_latency_stats(
@@ -409,7 +410,7 @@ def ai_logic_loop(
                 inference_end_perf = time.perf_counter()
                 postprocess_end_perf = time.perf_counter()
 
-                _update_queues(overlay_queue, auto_fire_boxes_queue, payload)
+                _update_queues(overlay_queue, auto_fire_boxes_queue, payload, capture_end_perf)
                 _publish_detection_frame(
                     latest_detection_state,
                     state,
@@ -417,7 +418,7 @@ def ai_logic_loop(
                     crosshair_y,
                     is_aiming,
                     payload,
-                    postprocess_end_perf,
+                    capture_end_perf,
                 )
                 _update_latency_stats(
                     settings,

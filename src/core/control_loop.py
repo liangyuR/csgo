@@ -36,6 +36,7 @@ _SETTLE_MIN_ALPHA = 0.58
 _SETTLE_DISTANCE_PX = 18.0
 _SETTLE_MIN_MOVE_PX = 1
 _SETTLE_MAX_MOVE_PX = 3
+_DYNAMIC_PREDICTION_MAX_DISTANCE_PX = 60.0
 _SPIN_GUARD_S = 0.002
 
 
@@ -204,6 +205,16 @@ def _reset_tracker_overlay(config: Config) -> None:
     config.tracker_has_prediction = False
 
 
+def _resolve_prediction_max_distance(
+    settings: RuntimeControlSettings,
+    speed_px_per_s: float,
+    prediction_time_s: float,
+) -> float:
+    dynamic_distance = max(float(speed_px_per_s), 0.0) * max(float(prediction_time_s), 0.0)
+    dynamic_distance = min(dynamic_distance, _DYNAMIC_PREDICTION_MAX_DISTANCE_PX)
+    return max(settings.prediction_max_distance_px, dynamic_distance)
+
+
 def _remaining_error_after_applied_move(raw_error: float, applied_delta: float) -> float:
     remaining_error = raw_error - applied_delta
     if (
@@ -351,11 +362,13 @@ def _reset_control_state(
         _clear_lock_state(state)
 
 
-def _candidate_for_box(box, crosshair_x: int, crosshair_y: int) -> tuple[float, float, float, Box]:
+def _candidate_for_box(box, confidence: float, crosshair_x: int, crosshair_y: int) -> tuple[float, float, float, float, Box]:
     box_tuple = _box_to_tuple(box)
     center_x, center_y = _box_center(box_tuple)
     distance_sq = _distance_sq(center_x, center_y, crosshair_x, crosshair_y)
-    return distance_sq, center_x, center_y, box_tuple
+    confidence_weight = max(float(confidence), 0.25)
+    weighted_distance_sq = distance_sq / confidence_weight
+    return weighted_distance_sq, distance_sq, center_x, center_y, box_tuple
 
 
 def _select_target(
@@ -377,9 +390,9 @@ def _select_target(
         lock_retain_time_s = float(getattr(config, "lock_retain_time_s", 0.12))
 
     previous_box = state.locked_box
-    selected: tuple[float, float, float, Box] | None = None
+    selected: tuple[float, float, float, float, Box] | None = None
     hold_lock = False
-    nearest_candidate: tuple[float, float, float, Box] | None = None
+    nearest_candidate: tuple[float, float, float, float, Box] | None = None
     best_locked_sort_key: tuple[float, float, float] | None = None
     locked_center_x = 0.0
     locked_center_y = 0.0
@@ -388,11 +401,12 @@ def _select_target(
     if sticky_enabled and previous_box is not None:
         locked_center_x, locked_center_y = _box_center(previous_box)
 
-    for box in payload.boxes:
-        candidate = _candidate_for_box(box, crosshair_x, crosshair_y)
-        distance_sq, center_x, center_y, box_tuple = candidate
+    for index, box in enumerate(payload.boxes):
+        confidence = payload.confidences[index] if index < len(payload.confidences) else 1.0
+        candidate = _candidate_for_box(box, confidence, crosshair_x, crosshair_y)
+        score, distance_sq, center_x, center_y, box_tuple = candidate
 
-        if nearest_candidate is None or distance_sq < nearest_candidate[0]:
+        if nearest_candidate is None or score < nearest_candidate[0]:
             nearest_candidate = candidate
 
         if not sticky_enabled or previous_box is None:
@@ -419,7 +433,7 @@ def _select_target(
             _clear_lock_state(state)
         return None, None, None, False, hold_lock
 
-    _, target_x, target_y, selected_box = selected
+    _, _, target_x, target_y, selected_box = selected
     same_target = _boxes_match(previous_box, selected_box, lock_retain_radius_px)
     target_changed = previous_box is not None and not same_target
     projected_smoothed_x = state.smoothed_target_x
@@ -484,9 +498,6 @@ def _update_tracker_targets(
         state.last_target_screen_y = target_y
         return predicted_x, predicted_y, tracker_active
 
-    measured_distance = math.hypot(target_x - crosshair_x, target_y - crosshair_y)
-    in_deadzone = measured_distance <= settings.aim_position_deadzone_px
-
     if state.smart_tracker is None:
         state.smart_tracker = SmartTracker(settings.velocity_ema_alpha, settings.velocity_deadzone_px_per_s)
     else:
@@ -527,14 +538,16 @@ def _update_tracker_targets(
     config.tracker_current_x = target_x
     config.tracker_current_y = target_y
 
-    if (
-        state.lock_match_frames >= 3
-        and not in_deadzone
-        and state.smart_tracker.get_speed() >= settings.velocity_deadzone_px_per_s
-    ):
+    speed = state.smart_tracker.get_speed()
+    if state.lock_match_frames >= 2 and speed >= settings.velocity_deadzone_px_per_s:
+        prediction_max_distance = _resolve_prediction_max_distance(
+            settings,
+            speed,
+            settings.prediction_lead_time_s,
+        )
         predicted_x, predicted_y = state.smart_tracker.get_predicted_position(
             settings.prediction_lead_time_s,
-            settings.prediction_max_distance_px,
+            prediction_max_distance,
         )
         config.tracker_predicted_x = predicted_x
         config.tracker_predicted_y = predicted_y
@@ -546,6 +559,29 @@ def _update_tracker_targets(
         config.tracker_has_prediction = False
 
     return predicted_x, predicted_y, tracker_active
+
+
+def _refresh_dynamic_control_target(
+    config: Config,
+    settings: RuntimeControlSettings,
+    state: ControlLoopState,
+    target_age_ms: float,
+) -> None:
+    if not state.tracker_active or state.smart_tracker is None:
+        return
+
+    prediction_time_s = settings.prediction_lead_time_s + max(target_age_ms, 0.0) / 1000.0
+    speed = state.smart_tracker.get_speed()
+    prediction_max_distance = _resolve_prediction_max_distance(settings, speed, prediction_time_s)
+    predicted_x, predicted_y = state.smart_tracker.get_predicted_position(
+        prediction_time_s,
+        prediction_max_distance,
+    )
+    state.control_target_x = predicted_x
+    state.control_target_y = predicted_y
+    config.tracker_predicted_x = predicted_x
+    config.tracker_predicted_y = predicted_y
+    config.tracker_has_prediction = True
 
 
 def _consume_detection_frame(
@@ -659,17 +695,23 @@ def _apply_control_output(
         stale_gain = 1.0 - ((target_age_ms - settings.control_stale_hold_ms) / max(settings.control_stale_decay_ms, 1e-6))
         stale_gain = min(max(stale_gain, 0.0), 1.0)
 
-    measured_error_x = _remaining_error_after_applied_move(state.measured_target_x - crosshair_x, state.applied_mouse_dx)
-    measured_error_y = _remaining_error_after_applied_move(state.measured_target_y - crosshair_y, state.applied_mouse_dy)
-    measured_distance = math.hypot(measured_error_x, measured_error_y)
-    if measured_distance <= settings.aim_position_deadzone_px:
-        pid_x.reset()
-        pid_y.reset()
-        return phase, target_age_ms
+    _refresh_dynamic_control_target(config, settings, state, target_age_ms)
 
     final_error_x = _remaining_error_after_applied_move(state.control_target_x - crosshair_x, state.applied_mouse_dx)
     final_error_y = _remaining_error_after_applied_move(state.control_target_y - crosshair_y, state.applied_mouse_dy)
     final_distance = math.hypot(final_error_x, final_error_y)
+    if state.tracker_active:
+        deadzone_distance = final_distance
+    else:
+        measured_error_x = _remaining_error_after_applied_move(state.measured_target_x - crosshair_x, state.applied_mouse_dx)
+        measured_error_y = _remaining_error_after_applied_move(state.measured_target_y - crosshair_y, state.applied_mouse_dy)
+        deadzone_distance = math.hypot(measured_error_x, measured_error_y)
+
+    if deadzone_distance <= settings.aim_position_deadzone_px:
+        pid_x.reset()
+        pid_y.reset()
+        return phase, target_age_ms
+
     control_stage = _determine_control_stage(state, final_distance, current_time)
     state.control_stage = control_stage
 

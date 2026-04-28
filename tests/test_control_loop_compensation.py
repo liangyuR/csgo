@@ -19,10 +19,15 @@ def _record_move(dx: int, dy: int, method: str = "mouse_event") -> None:
 
 
 fake_win_utils = types.ModuleType("win_utils")
+fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_move = _record_move
 fake_win_utils.send_mouse_click = lambda method="mouse_event": None
+fake_key_utils = types.ModuleType("win_utils.key_utils")
+fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
+fake_win_utils.key_utils = fake_key_utils
 sys.modules["win_utils"] = fake_win_utils
+sys.modules["win_utils.key_utils"] = fake_key_utils
 
 
 import core.control_loop as control_loop_module
@@ -230,6 +235,32 @@ class ControlLoopCompensationTests(unittest.TestCase):
         self.assertFalse(target_changed)
         self.assertFalse(hold_lock)
 
+    def test_select_target_uses_confidence_weighted_distance_for_new_lock(self) -> None:
+        config = self._make_config()
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [100.0, 90.0, 120.0, 110.0],
+                [108.0, 90.0, 128.0, 110.0],
+            ],
+            confidences=[0.1, 0.9],
+            class_ids=[0, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (108.0, 90.0, 128.0, 110.0))
+        self.assertEqual((target_x, target_y), (118.0, 100.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
     def test_select_target_prefers_locked_match_over_nearest_candidate(self) -> None:
         config = self._make_config()
         state = ControlLoopState(
@@ -322,6 +353,150 @@ class ControlLoopCompensationTests(unittest.TestCase):
 
         self.assertTrue(state.tracker_active)
         self.assertGreater(config.tracker_predicted_x, state.measured_target_x)
+
+    def test_hold_tick_extends_prediction_by_target_age(self) -> None:
+        config = self._make_config(
+            aim_position_deadzone_px=0.0,
+            velocity_deadzone_px_per_s=0.0,
+            prediction_lead_time_s=0.02,
+        )
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+        frames = [
+            self._make_frame(
+                1,
+                100,
+                100,
+                DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                2,
+                100,
+                100,
+                DetectionPayload(boxes=[[120.0, 90.0, 140.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                3,
+                100,
+                100,
+                DetectionPayload(boxes=[[130.0, 90.0, 150.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+        ]
+
+        run_control_step(config, state, pid_x, pid_y, frames[0], 1.0, 1.0, 0.005)
+        run_control_step(config, state, pid_x, pid_y, frames[1], 1.005, 1.005, 0.005)
+        run_control_step(config, state, pid_x, pid_y, frames[2], 1.01, 1.01, 0.005)
+        fresh_prediction_x = state.control_target_x
+
+        hold = run_control_step(config, state, pid_x, pid_y, frames[2], 1.03, 1.03, 0.005)
+
+        self.assertFalse(hold.processed_new_frame)
+        self.assertTrue(state.tracker_active)
+        self.assertIsNotNone(fresh_prediction_x)
+        self.assertGreater(state.control_target_x, fresh_prediction_x)
+
+    def test_tracker_moves_on_prediction_when_measured_target_is_inside_deadzone(self) -> None:
+        config = self._make_config(
+            aim_position_deadzone_px=3.0,
+            velocity_deadzone_px_per_s=0.0,
+            prediction_lead_time_s=0.02,
+        )
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+
+        run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            self._make_frame(
+                1,
+                100,
+                100,
+                DetectionPayload(boxes=[[83.0, 90.0, 103.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            1.0,
+            1.0,
+            0.005,
+        )
+        run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            self._make_frame(
+                2,
+                100,
+                100,
+                DetectionPayload(boxes=[[87.0, 90.0, 107.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            1.005,
+            1.005,
+            0.005,
+        )
+        _moves.clear()
+
+        run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            self._make_frame(
+                3,
+                100,
+                100,
+                DetectionPayload(boxes=[[91.0, 90.0, 111.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            1.01,
+            1.01,
+            0.005,
+        )
+
+        self.assertTrue(state.tracker_active)
+        self.assertLessEqual(abs(state.measured_target_x - 100), config.aim_position_deadzone_px)
+        self.assertGreater(_moves[-1][0], 0)
+
+    def test_dynamic_prediction_distance_exceeds_default_cap_for_fast_horizontal_target(self) -> None:
+        config = self._make_config(
+            aim_position_deadzone_px=0.0,
+            velocity_deadzone_px_per_s=0.0,
+            prediction_lead_time_s=0.02,
+            prediction_max_distance_px=20.0,
+        )
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+        frames = [
+            self._make_frame(
+                1,
+                100,
+                100,
+                DetectionPayload(boxes=[[110.0, 90.0, 130.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                2,
+                100,
+                100,
+                DetectionPayload(boxes=[[150.0, 90.0, 170.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+            self._make_frame(
+                3,
+                100,
+                100,
+                DetectionPayload(boxes=[[190.0, 90.0, 210.0, 110.0]], confidences=[0.9], class_ids=[0]),
+            ),
+        ]
+
+        run_control_step(config, state, pid_x, pid_y, frames[0], 1.0, 1.0, 0.005)
+        run_control_step(config, state, pid_x, pid_y, frames[1], 1.005, 1.005, 0.005)
+        run_control_step(config, state, pid_x, pid_y, frames[2], 1.01, 1.01, 0.005)
+
+        prediction_delta = state.control_target_x - state.measured_target_x
+        self.assertTrue(state.tracker_active)
+        self.assertGreater(prediction_delta, config.prediction_max_distance_px)
+        self.assertLessEqual(prediction_delta, 60.0)
 
     def test_combined_self_motion_and_target_motion_keeps_relative_velocity(self) -> None:
         config = self._make_config(

@@ -61,6 +61,7 @@ class PyQtOverlay(QWidget):
         self.boxes: List[List[float]] = []
         self.confidences: List[float] = []
         self.class_ids: List[int] = []
+        self._last_had_visible_content = False
 
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -92,18 +93,44 @@ class PyQtOverlay(QWidget):
             self.timer.setInterval(desired_interval)
             self._last_timer_interval_ms = desired_interval
 
-        try:
-            payload = self.payload_queue.get_nowait()
-        except queue.Empty:
-            payload = None
+        payload = None
+        while True:
+            try:
+                payload = self.payload_queue.get_nowait()
+            except queue.Empty:
+                break
 
         if payload is not None:
-            self.boxes = payload.boxes.tolist()
-            self.confidences = payload.confidences.tolist()
-            self.class_ids = payload.class_ids.tolist()
+            if getattr(self.config, "show_boxes", True):
+                self.boxes = payload.boxes.tolist()
+                if getattr(self.config, "show_confidence", True):
+                    self.confidences = payload.confidences.tolist()
+                    self.class_ids = payload.class_ids.tolist()
+                else:
+                    self.confidences = []
+                    self.class_ids = []
+            else:
+                self.boxes = []
+                self.confidences = []
+                self.class_ids = []
 
-        if self.config.AimToggle:
+        has_visible_content = self._has_visible_overlay_content()
+        if self.config.AimToggle and (has_visible_content or self._last_had_visible_content):
             self.update()
+        self._last_had_visible_content = has_visible_content
+
+    def _has_visible_overlay_content(self) -> bool:
+        if getattr(self.config, "show_detect_range", False):
+            return True
+        if getattr(self.config, "show_fov", True):
+            return True
+        if getattr(self.config, "show_boxes", True) and len(self.boxes) > 0:
+            return True
+        return (
+            getattr(self.config, "tracker_enabled", False)
+            and getattr(self.config, "tracker_show_prediction", True)
+            and getattr(self.config, "tracker_has_prediction", False)
+        )
 
     def _model_labels(self) -> List[str]:
         from core.model_registry import get_model_spec
@@ -195,7 +222,7 @@ class PyQtOverlay(QWidget):
                 x1, y1, x2, y2 = map(int, box)
                 self.draw_corner_box(painter, x1, y1, x2, y2)
 
-                if i < len(self.confidences):
+                if getattr(self.config, "show_confidence", True) and i < len(self.confidences):
                     confidence = self.confidences[i]
                     label = labels[self.class_ids[i]] if i < len(self.class_ids) and self.class_ids[i] < len(labels) else ""
                     painter.setPen(pen_text)

@@ -11,8 +11,8 @@ from .detection_state import DetectionPayload, empty_detection_payload
 
 
 EMPTY_DETECTION_PAYLOAD = empty_detection_payload()
+_PREDICT_MAX_DETECTIONS = 16
 
-from ultralytics import YOLO
 
 class UltralyticsEngineModel:
     """Thin Ultralytics wrapper with a stable detect() interface."""
@@ -22,7 +22,8 @@ class UltralyticsEngineModel:
     def __init__(self, engine_path: str, input_size: int) -> None:
         self.engine_path = engine_path
         self.input_size = int(input_size)
-        self._model = YOLO(engine_path, task="detect")
+        ultralytics = self._import_required_module("ultralytics")
+        self._model = ultralytics.YOLO(engine_path, task="detect")
 
     def warmup(self, iterations: int = 3) -> None:
         warmup_frame = self._build_warmup_frame()
@@ -38,12 +39,17 @@ class UltralyticsEngineModel:
         target_class_id: int | None = None,
         fov_bounds: tuple[int, int, int, int] | None = None,
     ) -> DetectionPayload:
-        results = self._model.predict(
-            source=frame,
-            imgsz=self.input_size,
-            conf=float(min_confidence),
-            verbose=False,
-        )
+        predict_kwargs = {
+            "source": frame,
+            "imgsz": self.input_size,
+            "conf": float(min_confidence),
+            "verbose": False,
+            "max_det": _PREDICT_MAX_DETECTIONS,
+        }
+        if target_class_id is not None:
+            predict_kwargs["classes"] = [int(target_class_id)]
+
+        results = self._model.predict(**predict_kwargs)
         if not results:
             return EMPTY_DETECTION_PAYLOAD
 

@@ -97,6 +97,8 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         self.assertEqual(model._model.predict_calls[0]["imgsz"], 640)
         self.assertEqual(model._model.predict_calls[0]["conf"], 0.25)
         self.assertFalse(model._model.predict_calls[0]["verbose"])
+        self.assertEqual(model._model.predict_calls[0]["max_det"], 16)
+        self.assertNotIn("classes", model._model.predict_calls[0])
 
     def test_detect_can_filter_by_target_class_and_fov_before_materializing_lists(self) -> None:
         fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
@@ -121,6 +123,8 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         )
         self.assertFloatListAlmostEqual(payload.confidences.tolist(), [0.8])
         self.assertEqual(payload.class_ids.tolist(), [3])
+        self.assertEqual(model._model.predict_calls[0]["classes"], [3])
+        self.assertEqual(model._model.predict_calls[0]["max_det"], 16)
 
 
 if __name__ == "__main__":

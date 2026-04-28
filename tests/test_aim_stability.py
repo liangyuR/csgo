@@ -35,10 +35,15 @@ def _reference_preprocess(image: np.ndarray, model_input_size: int) -> np.ndarra
 
 
 fake_win_utils = types.ModuleType("win_utils")
+fake_win_utils.__path__ = []
 fake_win_utils.is_key_pressed = lambda _key: False
 fake_win_utils.send_mouse_move = _record_move
 fake_win_utils.send_mouse_click = lambda method="mouse_event": None
-sys.modules.setdefault("win_utils", fake_win_utils)
+fake_key_utils = types.ModuleType("win_utils.key_utils")
+fake_key_utils.is_key_pressed = fake_win_utils.is_key_pressed
+fake_win_utils.key_utils = fake_key_utils
+sys.modules["win_utils"] = fake_win_utils
+sys.modules["win_utils.key_utils"] = fake_key_utils
 
 fake_win32api = types.ModuleType("win32api")
 fake_win32api.GetCursorPos = lambda: (960, 540)
@@ -307,6 +312,32 @@ class AimStabilityTests(unittest.TestCase):
         self.assertEqual(second.phase, "hold")
         self.assertEqual(state.lock_match_frames, first_match_frames)
         self.assertEqual(state.last_target_update_perf, first_update_perf)
+
+    def test_control_step_target_age_uses_capture_timestamp(self) -> None:
+        config = self._make_config(aim_position_deadzone_px=0.0)
+        state = ControlLoopState(cached_mouse_move_method="mouse_event")
+        pid_x = PIDController(0.2, 0.0, 0.0)
+        pid_y = PIDController(0.2, 0.0, 0.0)
+        payload = DetectionPayload(
+            boxes=[[110.0, 100.0, 130.0, 120.0]],
+            confidences=[0.9],
+            class_ids=[0],
+        )
+        frame = self._make_frame(1, 100, 100, True, payload, captured_perf=1.0)
+
+        result = run_control_step(
+            config,
+            state,
+            pid_x,
+            pid_y,
+            frame,
+            current_perf=1.03,
+            current_time=1.03,
+            tick_dt=0.02,
+        )
+
+        self.assertEqual(result.phase, "fresh")
+        self.assertAlmostEqual(result.target_age_ms, 30.0, places=5)
 
     def test_control_step_transitions_from_hold_to_decay_to_idle(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
