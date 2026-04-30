@@ -56,7 +56,7 @@ sys.modules.setdefault("mss", fake_mss)
 
 import core.ai_loop as ai_loop_module
 from core.ai_loop import _build_runtime_settings as build_detection_runtime_settings
-from core.ai_loop import _calculate_detection_region, _sync_user_mouse_block
+from core.ai_loop import _calculate_detection_region, _calculate_fov_bounds, _sync_user_mouse_block
 from core.config import apply_model_constraints, bump_runtime_refresh_token, migrate_config_data
 from core.control_loop import ControlLoopState, _select_target, run_control_step
 from core.detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
@@ -136,6 +136,7 @@ class AimStabilityTests(unittest.TestCase):
         migrated = migrate_config_data(
             {
                 "detect_interval": 0.02,
+                "detect_range_size": 640,
                 "single_target_mode": False,
                 "tracker_prediction_time": 0.04,
                 "tracker_smoothing_factor": 0.66,
@@ -151,6 +152,8 @@ class AimStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(migrated["velocity_deadzone_px_per_s"], 12.0)
         self.assertAlmostEqual(migrated["pid_ki_x"], 25.0)
         self.assertAlmostEqual(migrated["pid_kd_x"], 0.005)
+        self.assertEqual(migrated["detect_range_width"], 640)
+        self.assertEqual(migrated["detect_range_height"], 640)
         self.assertEqual(migrated["controller_version"], 3)
 
     def test_migrate_config_v3_bakes_old_pid_kp_boost_into_stored_kp(self) -> None:
@@ -196,6 +199,8 @@ class AimStabilityTests(unittest.TestCase):
 
         self.assertAlmostEqual(settings.min_confidence, 0.30)
         self.assertTrue(settings.block_user_mouse_on_aim)
+        self.assertEqual(settings.detect_range_width, get_default_model_spec().input_size)
+        self.assertEqual(settings.detect_range_height, get_default_model_spec().input_size)
 
     def test_user_mouse_block_sync_follows_aiming_state_and_toggle(self) -> None:
         calls: list[bool] = []
@@ -456,13 +461,15 @@ class AimStabilityTests(unittest.TestCase):
         self.assertFalse(state.target_locked)
         self.assertIsNone(state.control_target_x)
 
-    def test_apply_model_constraints_locks_detect_range_to_model_input(self) -> None:
+    def test_apply_model_constraints_allows_rectangular_full_screen_roi(self) -> None:
         config = SimpleNamespace(
             model_id="",
             model_path="Model/CS2.onnx",
             model_input_size=0,
             active_target_class="invalid",
             detect_range_size=560,
+            detect_range_width=1920,
+            detect_range_height=1080,
             fov_size=900,
             width=1920,
             height=1080,
@@ -471,11 +478,34 @@ class AimStabilityTests(unittest.TestCase):
         apply_model_constraints(config)
 
         self.assertEqual(config.model_input_size, 640)
-        self.assertEqual(config.detect_range_size, 640)
-        self.assertEqual(config.fov_size, 640)
+        self.assertEqual(config.detect_range_width, 1920)
+        self.assertEqual(config.detect_range_height, 1080)
+        self.assertEqual(config.detect_range_size, 1080)
+        self.assertEqual(config.fov_size, 900)
         self.assertEqual(config.active_target_class, "c")
         self.assertEqual(config.model_id, "yolo12n_cs2")
         self.assertEqual(config.model_path, "Model/yolo12n_cs2.engine")
+
+    def test_apply_model_constraints_clamps_rectangular_roi_to_screen(self) -> None:
+        config = SimpleNamespace(
+            model_id="yolo12n_cs2",
+            model_path="Model/yolo12n_cs2.engine",
+            model_input_size=0,
+            active_target_class="c",
+            detect_range_size=640,
+            detect_range_width=4096,
+            detect_range_height=2160,
+            fov_size=4096,
+            width=1920,
+            height=1080,
+        )
+
+        apply_model_constraints(config)
+
+        self.assertEqual(config.detect_range_width, 1920)
+        self.assertEqual(config.detect_range_height, 1080)
+        self.assertEqual(config.detect_range_size, 1080)
+        self.assertEqual(config.fov_size, 1080)
 
     def test_apply_model_constraints_maps_legacy_target_classes_to_groups(self) -> None:
         for legacy_class, expected_group in (("c", "c"), ("ch", "c"), ("t", "t"), ("th", "t")):
@@ -486,6 +516,8 @@ class AimStabilityTests(unittest.TestCase):
                     model_input_size=0,
                     active_target_class=legacy_class,
                     detect_range_size=560,
+                    detect_range_width=560,
+                    detect_range_height=560,
                     fov_size=900,
                     width=1920,
                     height=1080,
@@ -506,7 +538,8 @@ class AimStabilityTests(unittest.TestCase):
 
     def test_detection_region_stays_fixed_size_near_screen_edges(self) -> None:
         config = SimpleNamespace(
-            detect_range_size=640,
+            detect_range_width=800,
+            detect_range_height=480,
             fov_size=320,
             width=1920,
             height=1080,
@@ -515,8 +548,23 @@ class AimStabilityTests(unittest.TestCase):
         top_left = _calculate_detection_region(config, 10, 10)
         bottom_right = _calculate_detection_region(config, 1910, 1070)
 
-        self.assertEqual(top_left, {"left": 0, "top": 0, "width": 640, "height": 640})
-        self.assertEqual(bottom_right, {"left": 1280, "top": 440, "width": 640, "height": 640})
+        self.assertEqual(top_left, {"left": 0, "top": 0, "width": 800, "height": 480})
+        self.assertEqual(bottom_right, {"left": 1120, "top": 600, "width": 800, "height": 480})
+
+    def test_detection_region_supports_full_screen_roi_and_independent_fov(self) -> None:
+        config = SimpleNamespace(
+            detect_range_width=1920,
+            detect_range_height=1080,
+            fov_size=320,
+            width=1920,
+            height=1080,
+        )
+
+        region = _calculate_detection_region(config, 960, 540)
+        fov_bounds = _calculate_fov_bounds(960, 540, config.fov_size)
+
+        self.assertEqual(region, {"left": 0, "top": 0, "width": 1920, "height": 1080})
+        self.assertEqual(fov_bounds, (800, 380, 1120, 700))
 
     def test_preprocess_image_reuses_buffer_without_resize(self) -> None:
         image = np.random.randint(0, 256, (640, 640, 3), dtype=np.uint8)

@@ -39,6 +39,12 @@ def drop_legacy_config_keys(data: Dict[str, Any]) -> Dict[str, Any]:
 def migrate_config_data(data: Dict[str, Any]) -> Dict[str, Any]:
     migrated = dict(data)
 
+    if "detect_range_size" in migrated:
+        if "detect_range_width" not in migrated:
+            migrated["detect_range_width"] = migrated["detect_range_size"]
+        if "detect_range_height" not in migrated:
+            migrated["detect_range_height"] = migrated["detect_range_size"]
+
     if "single_target_mode" in migrated and "sticky_target_enabled" not in migrated:
         migrated["sticky_target_enabled"] = bool(migrated["single_target_mode"])
 
@@ -115,6 +121,8 @@ class Config:
         self.AimKeys: List[int] = [0x01, 0x06, 0x02]
         self.fov_size: int = 222
         self.detect_range_size: int = default_model.input_size
+        self.detect_range_width: int = default_model.input_size
+        self.detect_range_height: int = default_model.input_size
         self.show_confidence: bool = True
         self.min_confidence: float = 0.30
         self.aim_part: str = "head"
@@ -212,6 +220,8 @@ class Config:
         return {
             "fov_size": self.fov_size,
             "detect_range_size": self.detect_range_size,
+            "detect_range_width": self.detect_range_width,
+            "detect_range_height": self.detect_range_height,
             "model_path": self.model_path,
             "model_id": self.model_id,
             "model_input_size": self.model_input_size,
@@ -409,8 +419,6 @@ def _validate_fov_size(config: Config, spec: ModelSpec | None = None) -> None:
         raw = 0
 
     max_size = min(int(getattr(config, "width", spec.input_size) or spec.input_size), int(getattr(config, "height", spec.input_size) or spec.input_size))
-    if getattr(spec, "lock_detect_range_to_input", False):
-        max_size = min(max_size, int(spec.input_size))
     if max_size <= 0:
         max_size = int(spec.input_size)
     min_size = 50 if max_size >= 50 else 1
@@ -420,21 +428,24 @@ def _validate_fov_size(config: Config, spec: ModelSpec | None = None) -> None:
 
 def _validate_detect_range_size(config: Config, spec: ModelSpec | None = None) -> None:
     spec = spec or _resolve_model_spec(config)
-    if getattr(spec, "lock_detect_range_to_input", False):
-        config.detect_range_size = int(spec.input_size)
-        return
+    fallback_size = int(getattr(config, "detect_range_size", spec.input_size) or spec.input_size)
+    screen_width = max(int(getattr(config, "width", spec.input_size) or spec.input_size), 1)
+    screen_height = max(int(getattr(config, "height", spec.input_size) or spec.input_size), 1)
+    min_width = 50 if screen_width >= 50 else 1
+    min_height = 50 if screen_height >= 50 else 1
 
     try:
-        raw = int(getattr(config, "detect_range_size", config.height))
+        raw_width = int(getattr(config, "detect_range_width", fallback_size) or fallback_size)
     except (TypeError, ValueError):
-        raw = int(config.height)
+        raw_width = fallback_size
+    try:
+        raw_height = int(getattr(config, "detect_range_height", fallback_size) or fallback_size)
+    except (TypeError, ValueError):
+        raw_height = fallback_size
 
-    min_size = int(getattr(config, "fov_size", 0) or 0)
-    max_size = min(int(getattr(config, "width", raw) or raw), int(getattr(config, "height", raw) or raw))
-    if max_size <= 0:
-        max_size = raw if raw > 0 else 1
-
-    config.detect_range_size = max(min_size, min(max_size, raw))
+    config.detect_range_width = max(min_width, min(screen_width, raw_width))
+    config.detect_range_height = max(min_height, min(screen_height, raw_height))
+    config.detect_range_size = min(config.detect_range_width, config.detect_range_height)
 
 
 def _validate_stability_settings(config: Config) -> None:

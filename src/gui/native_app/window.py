@@ -154,10 +154,12 @@ class AimPage(SettingsPage):
         self.fov_card = self.add_card(tr("fov_and_detect_range", "FOV and detection"))
         self.fov_size = IntSliderSpin(50, 500, " px")
         self.fov_follow = QCheckBox()
-        self.detect_range = IntSliderSpin(50, 1080, " px")
+        self.detect_range_width = IntSliderSpin(50, 1920, " px")
+        self.detect_range_height = IntSliderSpin(50, 1080, " px")
         self.fov_size_label = add_row(self.fov_card, "", self.fov_size)
         self.fov_follow_label = add_row(self.fov_card, "", self.fov_follow)
-        self.detect_range_label = add_row(self.fov_card, "", self.detect_range)
+        self.detect_range_width_label = add_row(self.fov_card, "", self.detect_range_width)
+        self.detect_range_height_label = add_row(self.fov_card, "", self.detect_range_height)
 
         self.general_card = self.add_card(tr("general_params", "General"))
         self.detect_interval = IntSliderSpin(1, 100, " ms")
@@ -249,7 +251,8 @@ class AimPage(SettingsPage):
         self._refresh_class_list()
         self.fov_size.setValue(config.fov_size)
         self.fov_follow.setChecked(config.fov_follow_mouse)
-        self.detect_range.setValue(config.detect_range_size)
+        self.detect_range_width.setValue(getattr(config, "detect_range_width", config.detect_range_size))
+        self.detect_range_height.setValue(getattr(config, "detect_range_height", config.detect_range_size))
         self.detect_interval.setValue(int(config.detect_interval * 1000))
         self.confidence.setValue(int(config.min_confidence * 100))
         self.aim_part.setCurrentText(config.aim_part)
@@ -297,7 +300,8 @@ class AimPage(SettingsPage):
             (self.model_folder_label, "model_folder", "Model folder"),
             (self.fov_size_label, "fov_size", "FOV size"),
             (self.fov_follow_label, "fov_follow_mouse", "FOV follows mouse"),
-            (self.detect_range_label, "detect_range_size", "Detect range size"),
+            (self.detect_range_width_label, "detect_range_width", "Detect range width"),
+            (self.detect_range_height_label, "detect_range_height", "Detect range height"),
             (self.detect_interval_label, "detect_interval", "Detect interval"),
             (self.confidence_label, "minimum_confidence", "Minimum confidence"),
             (self.aim_part_label, "aim_part", "Aim part"),
@@ -329,7 +333,8 @@ class AimPage(SettingsPage):
         self.open_model_btn.clicked.connect(lambda: open_path(os.path.join(PROJECT_ROOT, "Model")))
         self.fov_size.valueChanged.connect(self._on_fov_changed)
         self.fov_follow.toggled.connect(lambda v: self._set("fov_follow_mouse", v))
-        self.detect_range.valueChanged.connect(self._on_detect_range_changed)
+        self.detect_range_width.valueChanged.connect(self._on_detect_range_width_changed)
+        self.detect_range_height.valueChanged.connect(self._on_detect_range_height_changed)
         self.detect_interval.valueChanged.connect(lambda v: self._set("detect_interval", v / 1000.0))
         self.confidence.valueChanged.connect(lambda v: self._set("min_confidence", v / 100.0))
         self.aim_part.currentTextChanged.connect(lambda v: self._set("aim_part", v))
@@ -381,16 +386,14 @@ class AimPage(SettingsPage):
         if self._config is None:
             return
         apply_model_constraints(self._config)
-        spec = get_model_spec(getattr(self._config, "model_id", ""))
-        max_size = max(50, min(int(self._config.width), int(self._config.height)))
-        if spec and spec.lock_detect_range_to_input:
-            self.fov_size.setRange(50, max(50, spec.input_size))
-            self.detect_range.setRange(spec.input_size, spec.input_size)
-            self.detect_range.setControlsEnabled(False)
-        else:
-            self.fov_size.setRange(50, max_size)
-            self.detect_range.setRange(50, max_size)
-            self.detect_range.setControlsEnabled(True)
+        max_fov = max(50, min(int(self._config.width), int(self._config.height)))
+        max_width = max(50, int(self._config.width))
+        max_height = max(50, int(self._config.height))
+        self.fov_size.setRange(50, max_fov)
+        self.detect_range_width.setRange(50, max_width)
+        self.detect_range_height.setRange(50, max_height)
+        self.detect_range_width.setControlsEnabled(True)
+        self.detect_range_height.setControlsEnabled(True)
 
     def _refresh_class_list(self) -> None:
         self.class_combo.blockSignals(True)
@@ -420,7 +423,8 @@ class AimPage(SettingsPage):
         self._loading = True
         self._update_model_controls()
         self.fov_size.setValue(self._config.fov_size)
-        self.detect_range.setValue(self._config.detect_range_size)
+        self.detect_range_width.setValue(self._config.detect_range_width)
+        self.detect_range_height.setValue(self._config.detect_range_height)
         self._refresh_class_list()
         self._loading = False
         window = self.window()
@@ -439,13 +443,21 @@ class AimPage(SettingsPage):
         if self.fov_size.value() != self._config.fov_size:
             self.fov_size.setValue(self._config.fov_size)
 
-    def _on_detect_range_changed(self, value: int) -> None:
+    def _on_detect_range_width_changed(self, value: int) -> None:
         if self._config is None or self._loading:
             return
-        self._config.detect_range_size = value
+        self._config.detect_range_width = value
         apply_model_constraints(self._config)
-        if self.detect_range.value() != self._config.detect_range_size:
-            self.detect_range.setValue(self._config.detect_range_size)
+        if self.detect_range_width.value() != self._config.detect_range_width:
+            self.detect_range_width.setValue(self._config.detect_range_width)
+
+    def _on_detect_range_height_changed(self, value: int) -> None:
+        if self._config is None or self._loading:
+            return
+        self._config.detect_range_height = value
+        apply_model_constraints(self._config)
+        if self.detect_range_height.value() != self._config.detect_range_height:
+            self.detect_range_height.setValue(self._config.detect_range_height)
 
     def _on_mouse_method(self, text: str) -> None:
         self._set("mouse_move_method", text)

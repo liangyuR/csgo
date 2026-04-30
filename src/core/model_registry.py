@@ -76,7 +76,7 @@ CS2_YOLO11M = ModelSpec(
         "t": ["th", "t"],
     },
     legacy_paths=["Model/yolo11m_cs2.onnx", "Model/yolo11m_cs2.pt"],
-    lock_detect_range_to_input=True,
+    lock_detect_range_to_input=False,
 )
 
 CS2_YOLO12M = ModelSpec(
@@ -96,7 +96,7 @@ CS2_YOLO12M = ModelSpec(
         "t": ["th", "t"],
     },
     legacy_paths=["Model/yolo12m_cs2.onnx"],
-    lock_detect_range_to_input=True,
+    lock_detect_range_to_input=False,
 )
 
 CS2_YOLO12N = ModelSpec(
@@ -116,7 +116,7 @@ CS2_YOLO12N = ModelSpec(
         "t": ["th", "t"],
     },
     legacy_paths=["Model/yolo12n_cs2.onnx", "Model/CS2.onnx"],
-    lock_detect_range_to_input=True,
+    lock_detect_range_to_input=False,
 )
 
 

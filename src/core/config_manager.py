@@ -64,6 +64,8 @@ class ConfigManager:
             {
                 "fov_size": config_instance.fov_size,
                 "detect_range_size": getattr(config_instance, "detect_range_size", getattr(config_instance, "height", 0)),
+                "detect_range_width": getattr(config_instance, "detect_range_width", getattr(config_instance, "detect_range_size", 0)),
+                "detect_range_height": getattr(config_instance, "detect_range_height", getattr(config_instance, "detect_range_size", 0)),
                 "min_confidence": config_instance.min_confidence,
                 "detect_interval": config_instance.detect_interval,
                 "idle_detect_interval": getattr(config_instance, "idle_detect_interval", 0.05),

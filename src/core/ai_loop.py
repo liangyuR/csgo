@@ -60,6 +60,8 @@ class DetectionRuntimeSettings:
     fov_follow_mouse: bool
     fov_size: int
     detect_range_size: int
+    detect_range_width: int
+    detect_range_height: int
     tracker_enabled: bool
     bezier_curve_enabled: bool
     enable_latency_stats: bool
@@ -103,6 +105,8 @@ def _build_runtime_settings(config: Config, model_spec: ModelSpec) -> DetectionR
         fov_follow_mouse=bool(getattr(config, "fov_follow_mouse", True)),
         fov_size=int(getattr(config, "fov_size", model_spec.input_size)),
         detect_range_size=int(getattr(config, "detect_range_size", model_spec.input_size)),
+        detect_range_width=int(getattr(config, "detect_range_width", getattr(config, "detect_range_size", model_spec.input_size))),
+        detect_range_height=int(getattr(config, "detect_range_height", getattr(config, "detect_range_size", model_spec.input_size))),
         tracker_enabled=bool(getattr(config, "tracker_enabled", False)),
         bezier_curve_enabled=bool(getattr(config, "bezier_curve_enabled", False)),
         enable_latency_stats=bool(getattr(config, "enable_latency_stats", False)),
@@ -186,20 +190,19 @@ def _calculate_detection_region(
 ) -> dict[str, int]:
     width = int(getattr(config, "width"))
     height = int(getattr(config, "height"))
-    detection_size = int(getattr(config, "detect_range_size", height))
-    detection_size = max(
-        int(getattr(config, "fov_size", detection_size)),
-        min(width, height, detection_size),
-    )
-    half_detection_size = detection_size // 2
+    fallback_size = int(getattr(config, "detect_range_size", min(width, height)))
+    roi_width = min(max(1, int(getattr(config, "detect_range_width", fallback_size))), max(width, 1))
+    roi_height = min(max(1, int(getattr(config, "detect_range_height", fallback_size))), max(height, 1))
+    half_roi_width = roi_width // 2
+    half_roi_height = roi_height // 2
 
-    max_left = max(0, width - detection_size)
-    max_top = max(0, height - detection_size)
+    max_left = max(0, width - roi_width)
+    max_top = max(0, height - roi_height)
     target = region if region is not None else {}
-    target["left"] = min(max(0, crosshair_x - half_detection_size), max_left)
-    target["top"] = min(max(0, crosshair_y - half_detection_size), max_top)
-    target["width"] = max(0, min(detection_size, width))
-    target["height"] = max(0, min(detection_size, height))
+    target["left"] = min(max(0, crosshair_x - half_roi_width), max_left)
+    target["top"] = min(max(0, crosshair_y - half_roi_height), max_top)
+    target["width"] = max(0, min(roi_width, width))
+    target["height"] = max(0, min(roi_height, height))
     return target
 
 
@@ -343,12 +346,13 @@ def ai_logic_loop(
     _run_warmup(model, model_spec.input_size)
 
     logger.info(
-        "AI loop started: provider=%s capture_backend=%s model_input=%dx%d detect_range=%s latency_stats=%s tracker=%s bezier=%s detect_interval=%.3f",
+        "AI loop started: provider=%s capture_backend=%s model_input=%dx%d detect_range=%sx%s latency_stats=%s tracker=%s bezier=%s detect_interval=%.3f",
         getattr(config, "current_provider", getattr(model, "provider_name", "unknown")),
         capture_backend.name,
         model_spec.input_size,
         model_spec.input_size,
-        settings.detect_range_size,
+        settings.detect_range_width,
+        settings.detect_range_height,
         settings.enable_latency_stats,
         settings.tracker_enabled,
         settings.bezier_curve_enabled,
