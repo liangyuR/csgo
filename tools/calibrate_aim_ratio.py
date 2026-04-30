@@ -13,7 +13,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from statistics import median
 from typing import Callable, Iterable, Sequence
 
@@ -36,9 +36,28 @@ LOW_SHIFT_MIN_PX = 5.0
 LOW_SHIFT_ROI_FRACTION = 0.005
 HIGH_SHIFT_ROI_FRACTION = 0.4
 HIGH_VARIANCE_RATIO = 0.15
+DEFAULT_MIN_RESPONSE = 0.25
+DEFAULT_MAX_MAD_RATIO = 0.25
+DEFAULT_MAX_CROSS_AXIS_RATIO = 0.35
+DEFAULT_VALIDATION_SAMPLES = 2
+DEFAULT_MAX_VALIDATION_ERROR_RATIO = 0.20
+DEFAULT_MIN_ACCEPTED_SAMPLES = 2
+MAX_PAIR_RETURN_RESIDUAL_RATIO = 0.45
 DEFAULT_CONFIG_PATH = os.path.join(ROOT, "config.json")
 VALID_MOUSE_METHODS = {"ddxoft"}
 CALIBRATABLE_MOUSE_METHODS = {"ddxoft"}
+
+
+@dataclass(frozen=True)
+class CalibrationSample:
+    axis: str
+    direction: str
+    main_shift_px: float
+    cross_shift_px: float
+    response: float
+    mouse_counts: int
+    accepted: bool
+    reject_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +68,12 @@ class AxisCalibration:
     median_shift_px: float
     mad_px: float
     mouse_counts: int
+    accepted_samples: int = 0
+    rejected_samples: int = 0
+    response_median: float = 0.0
+    mad_ratio: float = 0.0
+    validation_error_ratio: float | None = None
+    rejection_counts: dict[str, int] | None = None
 
 
 def clamp_ratio(value: float) -> float:
@@ -147,7 +172,7 @@ def estimate_shift_px(
     axis: str = "x",
     debug_save_dir: str | None = None,
     debug_name: str | None = None,
-) -> tuple[float, float]:
+) -> tuple[float, float, float]:
     """Return the visual shift in pixels from before to after.
 
     Uses OpenCV phase correlation. The return value is signed, but calibration
@@ -172,8 +197,8 @@ def estimate_shift_px(
     _save_debug_images(cv2, debug_save_dir, debug_name, before_array, after_array, before_roi, after_roi)
 
     window = cv2.createHanningWindow((before_gray.shape[1], before_gray.shape[0]), cv2.CV_32F)
-    shift, _response = cv2.phaseCorrelate(before_gray, after_gray, window)
-    return float(shift[0]), float(shift[1])
+    shift, response = cv2.phaseCorrelate(before_gray, after_gray, window)
+    return float(shift[0]), float(shift[1]), float(response)
 
 
 def ratio_from_shifts(shifts_px: Iterable[float], mouse_counts: int) -> tuple[float, tuple[float, ...], float, float]:
@@ -243,6 +268,78 @@ def _axis_component(shift: tuple[float, float], axis_name: str) -> float:
     return shift[0] if axis_name == "x" else shift[1]
 
 
+def _normalize_shift_result(shift: Sequence[float]) -> tuple[float, float, float]:
+    if len(shift) >= 3:
+        return float(shift[0]), float(shift[1]), float(shift[2])
+    if len(shift) == 2:
+        return float(shift[0]), float(shift[1]), 1.0
+    raise ValueError("shift result must contain x/y displacement")
+
+
+def _sample_rejection_counts(samples: Iterable[CalibrationSample]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for sample in samples:
+        if sample.accepted:
+            continue
+        reason = sample.reject_reason or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
+def _build_sample(
+    axis_name: str,
+    direction: str,
+    shift: Sequence[float],
+    mouse_counts: int,
+    min_response: float,
+    max_cross_axis_ratio: float,
+    min_main_shift_px: float,
+) -> CalibrationSample:
+    shift_x, shift_y, response = _normalize_shift_result(shift)
+    if axis_name == "x":
+        main_shift = shift_x
+        cross_shift = shift_y
+    else:
+        main_shift = shift_y
+        cross_shift = shift_x
+
+    reject_reason = None
+    main_abs = abs(main_shift)
+    cross_abs = abs(cross_shift)
+    if not np.isfinite(main_shift) or not np.isfinite(cross_shift) or not np.isfinite(response):
+        reject_reason = "non_finite"
+    elif response < min_response:
+        reject_reason = "low_response"
+    elif main_abs < min_main_shift_px:
+        reject_reason = "low_shift"
+    elif cross_abs > max(main_abs, 1e-6) * max_cross_axis_ratio:
+        reject_reason = "cross_axis"
+
+    return CalibrationSample(
+        axis=axis_name,
+        direction=direction,
+        main_shift_px=float(main_shift),
+        cross_shift_px=float(cross_shift),
+        response=float(response),
+        mouse_counts=int(mouse_counts),
+        accepted=reject_reason is None,
+        reject_reason=reject_reason,
+    )
+
+
+def _reject_sample(sample: CalibrationSample, reason: str) -> CalibrationSample:
+    return CalibrationSample(
+        axis=sample.axis,
+        direction=sample.direction,
+        main_shift_px=sample.main_shift_px,
+        cross_shift_px=sample.cross_shift_px,
+        response=sample.response,
+        mouse_counts=sample.mouse_counts,
+        accepted=False,
+        reject_reason=reason,
+    )
+
+
 def _roi_axis_dimension(frame: np.ndarray, axis_name: str, roi_fraction: float) -> int:
     roi = axis_crop(np.asarray(frame), roi_fraction, axis_name)
     return int(roi.shape[1] if axis_name == "x" else roi.shape[0])
@@ -259,7 +356,9 @@ def _sample_axis_pair(
     fresh_timeout_s: float,
     debug_save_dir: str | None,
     debug_name_prefix: str,
-) -> tuple[list[float], int]:
+    min_response: float,
+    max_cross_axis_ratio: float,
+) -> tuple[list[CalibrationSample], int]:
     if axis_name == "x":
         forward = (int(mouse_counts), 0)
         reverse = (-int(mouse_counts), 0)
@@ -269,6 +368,7 @@ def _sample_axis_pair(
 
     before = _capture_frame(camera, timeout_s=fresh_timeout_s)
     roi_dim = _roi_axis_dimension(before, axis_name, roi_fraction)
+    min_main_shift_px = max(LOW_SHIFT_MIN_PX, roi_dim * LOW_SHIFT_ROI_FRACTION)
 
     send_move(forward[0], forward[1], mouse_method)
     time.sleep(max(0.0, float(settle_s)))
@@ -294,7 +394,35 @@ def _sample_axis_pair(
         f"{debug_name_prefix}_rev",
     )
 
-    return [_axis_component(shift_forward, axis_name), _axis_component(shift_reverse, axis_name)], roi_dim
+    samples = [
+        _build_sample(
+            axis_name,
+            "forward",
+            shift_forward,
+            mouse_counts,
+            min_response,
+            max_cross_axis_ratio,
+            min_main_shift_px,
+        ),
+        _build_sample(
+            axis_name,
+            "reverse",
+            shift_reverse,
+            -mouse_counts,
+            min_response,
+            max_cross_axis_ratio,
+            min_main_shift_px,
+        ),
+    ]
+
+    if all(sample.accepted for sample in samples):
+        magnitudes = [abs(sample.main_shift_px) for sample in samples]
+        pair_median = float(median(magnitudes))
+        residual_ratio = abs(samples[0].main_shift_px + samples[1].main_shift_px) / max(pair_median, 1e-6)
+        if residual_ratio > MAX_PAIR_RETURN_RESIDUAL_RATIO:
+            samples = [_reject_sample(sample, "return_residual") for sample in samples]
+
+    return samples, roi_dim
 
 
 def _tune_counts(current_abs_counts: int, median_shift_px: float, roi_axis_dim: int) -> int:
@@ -319,6 +447,10 @@ def calibrate_axis(
     fresh_timeout_s: float = 0.25,
     auto_tune: bool = True,
     debug_save_dir: str | None = None,
+    min_response: float = DEFAULT_MIN_RESPONSE,
+    max_mad_ratio: float = DEFAULT_MAX_MAD_RATIO,
+    max_cross_axis_ratio: float = DEFAULT_MAX_CROSS_AXIS_RATIO,
+    min_accepted_samples: int = DEFAULT_MIN_ACCEPTED_SAMPLES,
 ) -> AxisCalibration:
     axis_name = axis.lower()
     if axis_name not in {"x", "y"}:
@@ -330,7 +462,7 @@ def calibrate_axis(
     count_sign = -1 if requested_counts < 0 else 1
     current_abs_counts = max(MIN_MOUSE_COUNTS, abs(requested_counts))
 
-    shifts: list[float] = []
+    sample_records: list[CalibrationSample] = []
     sample_pairs = max(1, int(samples))
     measured_pairs = 0
     tune_attempts = 0
@@ -338,7 +470,7 @@ def calibrate_axis(
 
     while measured_pairs < sample_pairs:
         signed_counts = current_abs_counts * count_sign
-        pair_shifts, roi_axis_dim = _sample_axis_pair(
+        pair_samples, roi_axis_dim = _sample_axis_pair(
             axis_name,
             camera,
             send_move,
@@ -349,11 +481,13 @@ def calibrate_axis(
             fresh_timeout_s,
             debug_save_dir,
             f"{axis_name}_{debug_index:03d}",
+            min_response,
+            max_cross_axis_ratio,
         )
         debug_index += 1
 
         if auto_tune and measured_pairs == 0:
-            pair_median = float(median(abs(value) for value in pair_shifts))
+            pair_median = float(median(abs(sample.main_shift_px) for sample in pair_samples))
             tuned_abs_counts = _tune_counts(current_abs_counts, pair_median, roi_axis_dim)
             if tuned_abs_counts != current_abs_counts and tune_attempts < MAX_AUTO_TUNE_ATTEMPTS:
                 direction = "increasing" if tuned_abs_counts > current_abs_counts else "decreasing"
@@ -365,12 +499,42 @@ def calibrate_axis(
                 tune_attempts += 1
                 continue
 
-        shifts.extend(pair_shifts)
+        sample_records.extend(pair_samples)
         measured_pairs += 1
 
     final_counts = current_abs_counts * count_sign
-    ratio, magnitudes, median_shift, mad_px = ratio_from_shifts(shifts, final_counts)
-    return AxisCalibration(axis_name, ratio, magnitudes, median_shift, mad_px, final_counts)
+    accepted = [sample for sample in sample_records if sample.accepted]
+    accepted_main_shifts = [sample.main_shift_px for sample in accepted]
+    required_samples = max(1, int(min_accepted_samples))
+    if len(accepted_main_shifts) < required_samples:
+        rejected = _sample_rejection_counts(sample_records)
+        raise RuntimeError(
+            f"{axis_name.upper()} axis calibration produced only {len(accepted_main_shifts)} accepted samples "
+            f"(required {required_samples}); rejections={rejected}"
+        )
+
+    ratio, magnitudes, median_shift, mad_px = ratio_from_shifts(accepted_main_shifts, final_counts)
+    mad_ratio = mad_px / max(median_shift, 1e-6)
+    if mad_ratio > max_mad_ratio:
+        raise RuntimeError(
+            f"{axis_name.upper()} axis calibration variance too high: MAD ratio {mad_ratio:.3f} > {max_mad_ratio:.3f}"
+        )
+
+    responses = [sample.response for sample in accepted]
+    response_median = float(median(responses)) if responses else 0.0
+    return AxisCalibration(
+        axis_name,
+        ratio,
+        magnitudes,
+        median_shift,
+        mad_px,
+        final_counts,
+        accepted_samples=len(accepted),
+        rejected_samples=len(sample_records) - len(accepted),
+        response_median=response_median,
+        mad_ratio=mad_ratio,
+        rejection_counts=_sample_rejection_counts(sample_records),
+    )
 
 
 def create_dxcam_camera():
@@ -425,10 +589,28 @@ def _print_axis_result(result: AxisCalibration) -> None:
     print(
         f"aim_pixel_ratio_{result.axis}={result.ratio:.4f} "
         f"(median {result.median_shift_px:.2f}px, MAD {result.mad_px:.2f}px, "
-        f"samples={len(result.samples)}, counts={result.mouse_counts})"
+        f"MAD ratio {result.mad_ratio:.3f}, response {result.response_median:.3f}, "
+        f"accepted={result.accepted_samples}, rejected={result.rejected_samples}, counts={result.mouse_counts})"
     )
+    if result.validation_error_ratio is not None:
+        print(f"validation_error_{result.axis}={result.validation_error_ratio:.3f}")
+    if result.rejection_counts:
+        print(f"rejections_{result.axis}={result.rejection_counts}")
     if result.median_shift_px > 0.0 and (result.mad_px / result.median_shift_px) > HIGH_VARIANCE_RATIO:
         print("WARNING: high variance, consider re-running on a more textured scene")
+
+
+def _with_validation_error(candidate: AxisCalibration, validation: AxisCalibration) -> AxisCalibration:
+    error_ratio = abs(validation.ratio - candidate.ratio) / max(candidate.ratio, 1e-6)
+    return replace(candidate, validation_error_ratio=error_ratio)
+
+
+def _raise_if_validation_failed(result: AxisCalibration, max_validation_error_ratio: float) -> None:
+    if result.validation_error_ratio is not None and result.validation_error_ratio > max_validation_error_ratio:
+        raise RuntimeError(
+            f"{result.axis.upper()} axis validation failed: ratio error "
+            f"{result.validation_error_ratio:.3f} > {max_validation_error_ratio:.3f}"
+        )
 
 
 def run_calibration(args: argparse.Namespace) -> int:
@@ -455,6 +637,9 @@ def run_calibration(args: argparse.Namespace) -> int:
             args.fresh_timeout_s,
             auto_tune=not args.no_auto_tune,
             debug_save_dir=args.debug_save,
+            min_response=args.min_response,
+            max_mad_ratio=args.max_mad_ratio,
+            max_cross_axis_ratio=args.max_cross_axis_ratio,
         )
         y_result = calibrate_axis(
             "y",
@@ -468,7 +653,56 @@ def run_calibration(args: argparse.Namespace) -> int:
             args.fresh_timeout_s,
             auto_tune=not args.no_auto_tune,
             debug_save_dir=args.debug_save,
+            min_response=args.min_response,
+            max_mad_ratio=args.max_mad_ratio,
+            max_cross_axis_ratio=args.max_cross_axis_ratio,
         )
+
+        validation_samples = max(0, int(args.validation_samples))
+        if validation_samples > 0:
+            x_validation = calibrate_axis(
+                "x",
+                camera,
+                send_mouse_move,
+                x_result.mouse_counts,
+                validation_samples,
+                mouse_method,
+                args.settle_s,
+                args.roi_fraction,
+                args.fresh_timeout_s,
+                auto_tune=False,
+                debug_save_dir=args.debug_save,
+                min_response=args.min_response,
+                max_mad_ratio=args.max_mad_ratio,
+                max_cross_axis_ratio=args.max_cross_axis_ratio,
+            )
+            y_validation = calibrate_axis(
+                "y",
+                camera,
+                send_mouse_move,
+                y_result.mouse_counts,
+                validation_samples,
+                mouse_method,
+                args.settle_s,
+                args.roi_fraction,
+                args.fresh_timeout_s,
+                auto_tune=False,
+                debug_save_dir=args.debug_save,
+                min_response=args.min_response,
+                max_mad_ratio=args.max_mad_ratio,
+                max_cross_axis_ratio=args.max_cross_axis_ratio,
+            )
+            x_result = _with_validation_error(x_result, x_validation)
+            y_result = _with_validation_error(y_result, y_validation)
+            _raise_if_validation_failed(x_result, args.max_validation_error_ratio)
+            _raise_if_validation_failed(y_result, args.max_validation_error_ratio)
+    except RuntimeError as exc:
+        if not getattr(args, "force_write", False):
+            print(f"Calibration failed: {exc}")
+            return 1
+        print(f"WARNING: calibration validation failed but --force-write is set: {exc}")
+        if "x_result" not in locals() or "y_result" not in locals():
+            return 1
     finally:
         if camera is not None and hasattr(camera, "stop"):
             camera.stop()
@@ -499,6 +733,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fresh-timeout-s", type=float, default=0.25, help="Timeout while waiting for a fresh dxcam frame")
     parser.add_argument("--debug-save", default=None, help="Directory for debug before/after/ROI PNG captures")
     parser.add_argument("--no-auto-tune", action="store_true", help="Disable automatic mouse-count adjustment")
+    parser.add_argument("--min-response", type=float, default=DEFAULT_MIN_RESPONSE, help="Minimum phase-correlation response accepted")
+    parser.add_argument("--max-mad-ratio", type=float, default=DEFAULT_MAX_MAD_RATIO, help="Maximum MAD/median ratio accepted per axis")
+    parser.add_argument(
+        "--max-cross-axis-ratio",
+        type=float,
+        default=DEFAULT_MAX_CROSS_AXIS_RATIO,
+        help="Maximum cross-axis displacement relative to main-axis displacement",
+    )
+    parser.add_argument("--validation-samples", type=int, default=DEFAULT_VALIDATION_SAMPLES, help="Validation sample pairs per axis")
+    parser.add_argument(
+        "--max-validation-error-ratio",
+        type=float,
+        default=DEFAULT_MAX_VALIDATION_ERROR_RATIO,
+        help="Maximum relative difference between calibration and validation ratios",
+    )
+    parser.add_argument("--force-write", action="store_true", help="Write config even when validation fails after ratios were measured")
     parser.add_argument(
         "--mouse-method",
         default=None,

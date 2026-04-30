@@ -141,11 +141,12 @@ class CalibrateAimRatioTests(unittest.TestCase):
         image = np.arange(100 * 100, dtype=np.uint16).reshape(100, 100)
 
         with mock.patch.dict(sys.modules, {"cv2": fake_cv2}):
-            calibrator.estimate_shift_px(image, image, roi_fraction=0.5, axis="y")
+            shift = calibrator.estimate_shift_px(image, image, roi_fraction=0.5, axis="y")
 
         self.assertIsNotNone(fake_cv2.before_gray)
         self.assertEqual(fake_cv2.before_gray.shape, (50, 50))
         self.assertEqual(float(fake_cv2.before_gray[0, 0]), float(image[15, 25]))
+        self.assertEqual(shift, (1.0, 2.0, 0.9))
 
     def test_grab_fresh_frame_polls_until_frame_arrives(self) -> None:
         frame = np.ones((4, 4), dtype=np.uint8)
@@ -195,7 +196,7 @@ class CalibrateAimRatioTests(unittest.TestCase):
         moves: list[tuple[int, int, str]] = []
 
         with (
-            mock.patch.object(calibrator, "estimate_shift_px", side_effect=[(99.0, -40.0), (99.0, 50.0)]),
+            mock.patch.object(calibrator, "estimate_shift_px", side_effect=[(5.0, -40.0), (5.0, 50.0)]),
             mock.patch.object(calibrator.time, "sleep", return_value=None),
         ):
             result = calibrator.calibrate_axis(
@@ -274,6 +275,207 @@ class CalibrateAimRatioTests(unittest.TestCase):
         self.assertEqual(result.samples, (100.0, 100.0))
         self.assertAlmostEqual(result.ratio, 2.0)
 
+    def test_calibrate_axis_rejects_low_response_samples(self) -> None:
+        frames = [np.zeros((100, 100), dtype=np.uint8) for _ in range(3)]
+        camera = _FakeCamera(frames)
+
+        with (
+            mock.patch.object(calibrator, "estimate_shift_px", side_effect=[(30.0, 0.0, 0.1), (-30.0, 0.0, 0.9)]),
+            mock.patch.object(calibrator.time, "sleep", return_value=None),
+        ):
+            result = calibrator.calibrate_axis(
+                "x",
+                camera,
+                lambda _dx, _dy, _method: None,
+                mouse_counts=100,
+                samples=1,
+                mouse_method="ddxoft",
+                settle_s=0.0,
+                roi_fraction=1.0,
+                auto_tune=False,
+                min_accepted_samples=1,
+            )
+
+        self.assertEqual(result.accepted_samples, 1)
+        self.assertEqual(result.rejected_samples, 1)
+        self.assertEqual(result.rejection_counts, {"low_response": 1})
+        self.assertAlmostEqual(result.ratio, 0.3)
+
+    def test_calibrate_axis_rejects_cross_axis_drift(self) -> None:
+        frames = [np.zeros((100, 100), dtype=np.uint8) for _ in range(3)]
+        camera = _FakeCamera(frames)
+
+        with (
+            mock.patch.object(calibrator, "estimate_shift_px", side_effect=[(30.0, 20.0, 0.9), (-30.0, 0.0, 0.9)]),
+            mock.patch.object(calibrator.time, "sleep", return_value=None),
+        ):
+            result = calibrator.calibrate_axis(
+                "x",
+                camera,
+                lambda _dx, _dy, _method: None,
+                mouse_counts=100,
+                samples=1,
+                mouse_method="ddxoft",
+                settle_s=0.0,
+                roi_fraction=1.0,
+                auto_tune=False,
+                max_cross_axis_ratio=0.35,
+                min_accepted_samples=1,
+            )
+
+        self.assertEqual(result.accepted_samples, 1)
+        self.assertEqual(result.rejected_samples, 1)
+        self.assertEqual(result.rejection_counts, {"cross_axis": 1})
+        self.assertAlmostEqual(result.ratio, 0.3)
+
+    def test_run_calibration_does_not_write_when_samples_are_rejected(self) -> None:
+        config_path = self._temporary_config_path()
+        original = {"aim_pixel_ratio_x": 1.0, "aim_pixel_ratio_y": 1.0, "mouse_move_method": "ddxoft"}
+        with open(config_path, "w", encoding="utf-8") as handle:
+            json.dump(original, handle)
+
+        camera = _FakeCamera([np.zeros((100, 100), dtype=np.uint8) for _ in range(6)])
+        fake_win_utils = types.SimpleNamespace(send_mouse_move=lambda _dx, _dy, _method: None)
+        args = calibrator.build_parser().parse_args(
+            [
+                "--config",
+                config_path,
+                "--samples",
+                "1",
+                "--validation-samples",
+                "0",
+                "--mouse-counts",
+                "100",
+                "--settle-s",
+                "0",
+                "--warmup-s",
+                "0",
+                "--countdown",
+                "0",
+                "--no-auto-tune",
+            ]
+        )
+
+        with (
+            mock.patch.dict(sys.modules, {"win_utils": fake_win_utils}),
+            mock.patch.object(calibrator, "create_dxcam_camera", return_value=camera),
+            mock.patch.object(calibrator, "estimate_shift_px", side_effect=[(30.0, 0.0, 0.1), (-30.0, 0.0, 0.1)]),
+            mock.patch.object(calibrator.time, "sleep", return_value=None),
+        ):
+            exit_code = calibrator.run_calibration(args)
+
+        self.assertEqual(exit_code, 1)
+        with open(config_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), original)
+
+    def test_run_calibration_does_not_write_when_validation_fails(self) -> None:
+        config_path = self._temporary_config_path()
+        original = {"aim_pixel_ratio_x": 1.0, "aim_pixel_ratio_y": 1.0, "mouse_move_method": "ddxoft"}
+        with open(config_path, "w", encoding="utf-8") as handle:
+            json.dump(original, handle)
+
+        camera = _FakeCamera([np.zeros((100, 100), dtype=np.uint8) for _ in range(12)])
+        fake_win_utils = types.SimpleNamespace(send_mouse_move=lambda _dx, _dy, _method: None)
+        args = calibrator.build_parser().parse_args(
+            [
+                "--config",
+                config_path,
+                "--samples",
+                "1",
+                "--validation-samples",
+                "1",
+                "--mouse-counts",
+                "100",
+                "--settle-s",
+                "0",
+                "--warmup-s",
+                "0",
+                "--countdown",
+                "0",
+                "--no-auto-tune",
+            ]
+        )
+
+        with (
+            mock.patch.dict(sys.modules, {"win_utils": fake_win_utils}),
+            mock.patch.object(calibrator, "create_dxcam_camera", return_value=camera),
+            mock.patch.object(
+                calibrator,
+                "estimate_shift_px",
+                side_effect=[
+                    (30.0, 0.0, 0.9),
+                    (-30.0, 0.0, 0.9),
+                    (0.0, 40.0, 0.9),
+                    (0.0, -40.0, 0.9),
+                    (60.0, 0.0, 0.9),
+                    (-60.0, 0.0, 0.9),
+                    (0.0, 40.0, 0.9),
+                    (0.0, -40.0, 0.9),
+                ],
+            ),
+            mock.patch.object(calibrator.time, "sleep", return_value=None),
+        ):
+            exit_code = calibrator.run_calibration(args)
+
+        self.assertEqual(exit_code, 1)
+        with open(config_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), original)
+
+    def test_run_calibration_force_write_persists_after_validation_failure(self) -> None:
+        config_path = self._temporary_config_path()
+        with open(config_path, "w", encoding="utf-8") as handle:
+            json.dump({"aim_pixel_ratio_x": 1.0, "aim_pixel_ratio_y": 1.0, "mouse_move_method": "ddxoft"}, handle)
+
+        camera = _FakeCamera([np.zeros((100, 100), dtype=np.uint8) for _ in range(12)])
+        fake_win_utils = types.SimpleNamespace(send_mouse_move=lambda _dx, _dy, _method: None)
+        args = calibrator.build_parser().parse_args(
+            [
+                "--config",
+                config_path,
+                "--samples",
+                "1",
+                "--validation-samples",
+                "1",
+                "--mouse-counts",
+                "100",
+                "--settle-s",
+                "0",
+                "--warmup-s",
+                "0",
+                "--countdown",
+                "0",
+                "--no-auto-tune",
+                "--force-write",
+            ]
+        )
+
+        with (
+            mock.patch.dict(sys.modules, {"win_utils": fake_win_utils}),
+            mock.patch.object(calibrator, "create_dxcam_camera", return_value=camera),
+            mock.patch.object(
+                calibrator,
+                "estimate_shift_px",
+                side_effect=[
+                    (30.0, 0.0, 0.9),
+                    (-30.0, 0.0, 0.9),
+                    (0.0, 40.0, 0.9),
+                    (0.0, -40.0, 0.9),
+                    (60.0, 0.0, 0.9),
+                    (-60.0, 0.0, 0.9),
+                    (0.0, 40.0, 0.9),
+                    (0.0, -40.0, 0.9),
+                ],
+            ),
+            mock.patch.object(calibrator.time, "sleep", return_value=None),
+        ):
+            exit_code = calibrator.run_calibration(args)
+
+        self.assertEqual(exit_code, 0)
+        with open(config_path, "r", encoding="utf-8") as handle:
+            updated = json.load(handle)
+        self.assertAlmostEqual(updated["aim_pixel_ratio_x"], 0.3)
+        self.assertAlmostEqual(updated["aim_pixel_ratio_y"], 0.4)
+
     def test_run_calibration_defaults_method_from_config_and_stops_camera(self) -> None:
         config_path = self._temporary_config_path()
         with open(config_path, "w", encoding="utf-8") as handle:
@@ -297,6 +499,8 @@ class CalibrateAimRatioTests(unittest.TestCase):
                 "--countdown",
                 "0",
                 "--no-auto-tune",
+                "--validation-samples",
+                "0",
             ]
         )
 
@@ -306,7 +510,7 @@ class CalibrateAimRatioTests(unittest.TestCase):
             mock.patch.object(
                 calibrator,
                 "estimate_shift_px",
-                side_effect=[(30.0, 0.0), (-30.0, 0.0), (0.0, 40.0), (0.0, -40.0)],
+                side_effect=[(30.0, 0.0, 0.9), (-30.0, 0.0, 0.9), (0.0, 40.0, 0.9), (0.0, -40.0, 0.9)],
             ),
             mock.patch.object(calibrator.time, "sleep", return_value=None),
         ):
