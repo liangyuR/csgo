@@ -399,6 +399,114 @@ class ControlLoopCompensationTests(unittest.TestCase):
         self.assertFalse(target_changed)
         self.assertFalse(hold_lock)
 
+    def test_select_target_prefers_ct_head_over_body_in_same_group(self) -> None:
+        config = self._make_config(target_class_priority={1: 0, 0: 1})
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [96.0, 96.0, 116.0, 116.0],
+                [150.0, 90.0, 170.0, 110.0],
+            ],
+            confidences=[0.95, 0.70],
+            class_ids=[0, 1],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (150.0, 90.0, 170.0, 110.0))
+        self.assertEqual((target_x, target_y), (160.0, 100.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
+    def test_select_target_prefers_t_head_over_body_in_same_group(self) -> None:
+        config = self._make_config(target_class_priority={3: 0, 2: 1})
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[
+                [96.0, 96.0, 116.0, 116.0],
+                [150.0, 90.0, 170.0, 110.0],
+            ],
+            confidences=[0.95, 0.70],
+            class_ids=[2, 3],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (150.0, 90.0, 170.0, 110.0))
+        self.assertEqual((target_x, target_y), (160.0, 100.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
+    def test_select_target_falls_back_to_body_when_head_is_absent(self) -> None:
+        config = self._make_config(target_class_priority={1: 0, 0: 1})
+        state = ControlLoopState()
+        payload = DetectionPayload(
+            boxes=[[96.0, 96.0, 116.0, 116.0]],
+            confidences=[0.95],
+            class_ids=[0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.0,
+        )
+
+        self.assertEqual(selected_box, (96.0, 96.0, 116.0, 116.0))
+        self.assertEqual((target_x, target_y), (106.0, 106.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
+    def test_sticky_lock_keeps_body_match_when_head_also_appears(self) -> None:
+        config = self._make_config(target_class_priority={1: 0, 0: 1})
+        state = ControlLoopState(
+            target_locked=True,
+            locked_box=(90.0, 90.0, 130.0, 150.0),
+            lock_last_seen_time=1.0,
+            smoothed_target_x=110.0,
+            smoothed_target_y=120.0,
+            lock_match_frames=5,
+        )
+        payload = DetectionPayload(
+            boxes=[
+                [104.0, 92.0, 116.0, 104.0],
+                [91.0, 91.0, 131.0, 151.0],
+            ],
+            confidences=[0.95, 0.90],
+            class_ids=[1, 0],
+        )
+
+        selected_box, target_x, target_y, target_changed, hold_lock = _select_target(
+            config,
+            payload,
+            100,
+            100,
+            state,
+            1.02,
+        )
+
+        self.assertEqual(selected_box, (91.0, 91.0, 131.0, 151.0))
+        self.assertEqual((target_x, target_y), (111.0, 121.0))
+        self.assertFalse(target_changed)
+        self.assertFalse(hold_lock)
+
     def test_self_motion_is_removed_from_tracker_velocity(self) -> None:
         config = self._make_config(aim_position_deadzone_px=0.0)
         state = ControlLoopState(cached_mouse_move_method="ddxoft")

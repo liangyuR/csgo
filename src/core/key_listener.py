@@ -11,8 +11,9 @@ from win_utils import get_vk_name
 
 
 def _cycle_target_class(config) -> None:
-    cycle = list(get_default_model_spec().target_cycle())
-    current = getattr(config, "active_target_class", cycle[0])
+    spec = get_default_model_spec()
+    cycle = list(spec.target_cycle())
+    current = spec.normalize_target_group(getattr(config, "active_target_class", cycle[0]))
     try:
         next_index = (cycle.index(current) + 1) % len(cycle)
     except ValueError:

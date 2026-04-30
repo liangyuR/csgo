@@ -118,7 +118,7 @@ class Config:
         self.show_confidence: bool = True
         self.min_confidence: float = 0.30
         self.aim_part: str = "head"
-        self.active_target_class: str = default_model.labels[0]
+        self.active_target_class: str = default_model.target_cycle()[0]
         self.sticky_target_enabled: bool = True
         self.capture_backend: str = "auto"
 
@@ -469,8 +469,7 @@ def _migrate_model_settings(config: Config) -> None:
     config.model_input_size = spec.input_size
     config.current_provider = "Ultralytics/TensorRT"
 
-    if getattr(config, "active_target_class", "") not in spec.labels:
-        config.active_target_class = spec.labels[0]
+    config.active_target_class = spec.normalize_target_group(getattr(config, "active_target_class", ""))
 
     _validate_fov_size(config, spec)
     _validate_detect_range_size(config, spec)

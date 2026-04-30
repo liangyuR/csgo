@@ -12,6 +12,7 @@ class ModelSpec:
     input_size: int
     labels: List[str]
     class_to_semantic: Dict[str, str]
+    target_groups: Dict[str, List[str]] = field(default_factory=dict)
     legacy_paths: List[str] = field(default_factory=list)
     postprocess_type: str = "yolo_multiclass"
     lock_detect_range_to_input: bool = False
@@ -25,7 +26,37 @@ class ModelSpec:
         return f"class_{class_id}"
 
     def target_cycle(self) -> List[str]:
+        if self.target_groups:
+            return list(self.target_groups)
         return list(self.labels)
+
+    def normalize_target_group(self, value: str | None) -> str:
+        normalized = str(value or "").lower()
+        if self.target_groups:
+            if normalized in self.target_groups:
+                return normalized
+            for group, labels in self.target_groups.items():
+                if normalized in labels:
+                    return group
+            return self.target_cycle()[0]
+        if normalized in self.labels:
+            return normalized
+        return self.target_cycle()[0]
+
+    def target_group_labels(self, group: str | None) -> List[str]:
+        normalized = self.normalize_target_group(group)
+        if self.target_groups:
+            return list(self.target_groups[normalized])
+        return [normalized]
+
+    def target_group_class_ids(self, group: str | None) -> List[int]:
+        return [self.label_to_class_id(label) for label in self.target_group_labels(group)]
+
+    def target_class_priority(self, group: str | None) -> Dict[int, int]:
+        return {
+            self.label_to_class_id(label): priority
+            for priority, label in enumerate(self.target_group_labels(group))
+        }
 
 
 CS2_YOLO11M = ModelSpec(
@@ -39,6 +70,10 @@ CS2_YOLO11M = ModelSpec(
         "ch": "head",
         "t": "body",
         "th": "head",
+    },
+    target_groups={
+        "c": ["ch", "c"],
+        "t": ["th", "t"],
     },
     legacy_paths=["Model/yolo11m_cs2.onnx", "Model/yolo11m_cs2.pt"],
     lock_detect_range_to_input=True,
@@ -56,6 +91,10 @@ CS2_YOLO12M = ModelSpec(
         "t": "body",
         "th": "head",
     },
+    target_groups={
+        "c": ["ch", "c"],
+        "t": ["th", "t"],
+    },
     legacy_paths=["Model/yolo12m_cs2.onnx"],
     lock_detect_range_to_input=True,
 )
@@ -71,6 +110,10 @@ CS2_YOLO12N = ModelSpec(
         "ch": "head",
         "t": "body",
         "th": "head",
+    },
+    target_groups={
+        "c": ["ch", "c"],
+        "t": ["th", "t"],
     },
     legacy_paths=["Model/yolo12n_cs2.onnx", "Model/CS2.onnx"],
     lock_detect_range_to_input=True,

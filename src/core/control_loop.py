@@ -14,6 +14,7 @@ from win_utils import send_mouse_move
 
 from .detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
 from .inference import PIDController
+from .model_registry import get_default_model_spec, get_model_spec
 from .smart_tracker import SmartTracker
 
 if TYPE_CHECKING:
@@ -74,6 +75,7 @@ class RuntimeControlSettings:
     aim_pixel_ratio_x: float
     aim_pixel_ratio_y: float
     tracker_use_acceleration: bool
+    target_class_priority: dict[int, int]
 
 
 @dataclass
@@ -124,6 +126,8 @@ class ControlStepResult:
 
 
 def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
+    spec = get_model_spec(str(getattr(config, "model_id", "") or "")) or get_default_model_spec()
+    active_target_group = spec.normalize_target_group(getattr(config, "active_target_class", ""))
     return RuntimeControlSettings(
         pid_kp_x=float(getattr(config, "pid_kp_x", 0.45)),
         pid_ki_x=float(getattr(config, "pid_ki_x", 0.0)),
@@ -159,6 +163,7 @@ def _build_runtime_settings(config: Config) -> RuntimeControlSettings:
         aim_pixel_ratio_x=min(max(float(getattr(config, "aim_pixel_ratio_x", 1.0) or 1.0), 0.1), 10.0),
         aim_pixel_ratio_y=min(max(float(getattr(config, "aim_pixel_ratio_y", 1.0) or 1.0), 0.1), 10.0),
         tracker_use_acceleration=bool(getattr(config, "tracker_use_acceleration", False)),
+        target_class_priority=spec.target_class_priority(active_target_group),
     )
 
 
@@ -378,7 +383,13 @@ def _box_area(box: Box) -> float:
     return width * height
 
 
-def _candidate_for_box(box, confidence: float, crosshair_x: int, crosshair_y: int) -> tuple[float, float, float, float, Box]:
+def _candidate_for_box(
+    box,
+    confidence: float,
+    crosshair_x: int,
+    crosshair_y: int,
+    class_priority: int = 0,
+) -> tuple[int, float, float, float, float, Box]:
     box_tuple = _box_to_tuple(box)
     center_x, center_y = _box_center(box_tuple)
     distance_sq = _distance_sq(center_x, center_y, crosshair_x, crosshair_y)
@@ -387,7 +398,18 @@ def _candidate_for_box(box, confidence: float, crosshair_x: int, crosshair_y: in
     # Penalize unrealistically small detections, which are usually noise.
     area_weight = math.sqrt(area)
     weighted_distance_sq = distance_sq / (confidence_weight * area_weight)
-    return weighted_distance_sq, distance_sq, center_x, center_y, box_tuple
+    return class_priority, weighted_distance_sq, distance_sq, center_x, center_y, box_tuple
+
+
+def _resolve_class_priority(
+    class_priority: dict[int, int],
+    class_id: int | None,
+) -> int:
+    if not class_priority:
+        return 0
+    if class_id is None:
+        return max(class_priority.values(), default=0) + 1
+    return class_priority.get(int(class_id), max(class_priority.values(), default=0) + 1)
 
 
 def _select_target(
@@ -409,9 +431,15 @@ def _select_target(
         lock_retain_time_s = float(getattr(config, "lock_retain_time_s", 0.12))
 
     previous_box = state.locked_box
-    selected: tuple[float, float, float, float, Box] | None = None
+    class_priority = (
+        settings.target_class_priority
+        if settings is not None
+        else dict(getattr(config, "target_class_priority", {}) or {})
+    )
+
+    selected: tuple[int, float, float, float, float, Box] | None = None
     hold_lock = False
-    nearest_candidate: tuple[float, float, float, float, Box] | None = None
+    nearest_candidate: tuple[int, float, float, float, float, Box] | None = None
     best_locked_sort_key: tuple[float, float, float] | None = None
     locked_center_x = 0.0
     locked_center_y = 0.0
@@ -422,13 +450,20 @@ def _select_target(
 
     for index, box in enumerate(payload.boxes):
         confidence = payload.confidences[index] if index < len(payload.confidences) else 1.0
-        candidate = _candidate_for_box(box, confidence, crosshair_x, crosshair_y)
-        score, distance_sq, center_x, center_y, box_tuple = candidate
+        detected_class_id = payload.class_ids[index] if index < len(payload.class_ids) else None
+        candidate = _candidate_for_box(
+            box,
+            confidence,
+            crosshair_x,
+            crosshair_y,
+            _resolve_class_priority(class_priority, detected_class_id),
+        )
+        priority, score, distance_sq, center_x, center_y, box_tuple = candidate
 
         if _box_area(box_tuple) < _MIN_BOX_AREA_PX2:
             continue
 
-        if nearest_candidate is None or score < nearest_candidate[0]:
+        if nearest_candidate is None or (priority, score) < (nearest_candidate[0], nearest_candidate[1]):
             nearest_candidate = candidate
 
         if not sticky_enabled or previous_box is None:
@@ -461,7 +496,7 @@ def _select_target(
         and state.last_candidate_y is not None
         and (current_time - state.last_candidate_perf) <= lock_retain_time_s
     ):
-        cand_x, cand_y = selected[2], selected[3]
+        cand_x, cand_y = selected[3], selected[4]
         consistency_radius_sq = (lock_retain_radius_px * 2.0) ** 2
         if _distance_sq(cand_x, cand_y, state.last_candidate_x, state.last_candidate_y) > consistency_radius_sq:
             state.last_candidate_x = cand_x
@@ -470,8 +505,8 @@ def _select_target(
             return None, None, None, False, False
 
     if nearest_candidate is not None:
-        state.last_candidate_x = nearest_candidate[2]
-        state.last_candidate_y = nearest_candidate[3]
+        state.last_candidate_x = nearest_candidate[3]
+        state.last_candidate_y = nearest_candidate[4]
         state.last_candidate_perf = current_time
 
     if selected is None:
@@ -479,7 +514,7 @@ def _select_target(
             _clear_lock_state(state)
         return None, None, None, False, hold_lock
 
-    _, _, target_x, target_y, selected_box = selected
+    _, _, _, target_x, target_y, selected_box = selected
     same_target = _boxes_match(previous_box, selected_box, lock_retain_radius_px)
     target_changed = previous_box is not None and not same_target
     projected_smoothed_x = state.smoothed_target_x

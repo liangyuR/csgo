@@ -30,7 +30,7 @@ if TYPE_CHECKING:
             min_confidence: float,
             offset_x: int = 0,
             offset_y: int = 0,
-            target_class_id: int | None = None,
+            target_class_ids: list[int] | None = None,
             fov_bounds: tuple[int, int, int, int] | None = None,
         ) -> DetectionPayload: ...
 
@@ -59,7 +59,7 @@ class DetectionRuntimeSettings:
     latency_stats_interval: float
     latency_stats_alpha: float
     capture_backend: str
-    target_class_id: int | None
+    target_class_ids: list[int] | None
 
 
 @dataclass
@@ -79,9 +79,7 @@ class DetectionLoopState:
 
 
 def _build_runtime_settings(config: Config, model_spec: ModelSpec) -> DetectionRuntimeSettings:
-    active_target_class = getattr(config, "active_target_class", model_spec.labels[0])
-    if active_target_class not in model_spec.labels:
-        active_target_class = model_spec.labels[0]
+    active_target_class = model_spec.normalize_target_group(getattr(config, "active_target_class", ""))
 
     return DetectionRuntimeSettings(
         width=int(getattr(config, "width")),
@@ -103,7 +101,7 @@ def _build_runtime_settings(config: Config, model_spec: ModelSpec) -> DetectionR
         latency_stats_interval=float(getattr(config, "latency_stats_interval", 1.0)),
         latency_stats_alpha=float(getattr(config, "latency_stats_alpha", 0.2)),
         capture_backend=str(getattr(config, "capture_backend", "auto") or "auto").lower(),
-        target_class_id=model_spec.label_to_class_id(active_target_class),
+        target_class_ids=model_spec.target_group_class_ids(active_target_class),
     )
 
 
@@ -404,7 +402,7 @@ def ai_logic_loop(
                     min_confidence=settings.min_confidence,
                     offset_x=region["left"],
                     offset_y=region["top"],
-                    target_class_id=settings.target_class_id,
+                    target_class_ids=settings.target_class_ids,
                     fov_bounds=_calculate_fov_bounds(crosshair_x, crosshair_y, settings.fov_size),
                 )
                 inference_end_perf = time.perf_counter()

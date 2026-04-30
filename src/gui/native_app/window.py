@@ -175,6 +175,8 @@ class AimPage(SettingsPage):
         self.detect_interval_label = add_row(self.general_card, "", self.detect_interval)
         self.confidence_label = add_row(self.general_card, "", self.confidence)
         self.aim_part_label = add_row(self.general_card, "", self.aim_part)
+        self.aim_part_label.hide()
+        self.aim_part.hide()
         self.mouse_method_label = add_row(self.general_card, "", self.mouse_method)
         self.always_aim_label = add_row(self.general_card, "", self.always_aim)
         self.keep_detecting_label = add_row(self.general_card, "", self.keep_detecting)
@@ -396,9 +398,12 @@ class AimPage(SettingsPage):
         if self._config is not None:
             spec = get_model_spec(getattr(self._config, "model_id", ""))
             if spec:
-                self.class_combo.addItems([label.upper() for label in spec.labels])
-                if self._config.active_target_class in spec.labels:
-                    self.class_combo.setCurrentIndex(spec.labels.index(self._config.active_target_class))
+                target_cycle = spec.target_cycle()
+                self.class_combo.addItems([label.upper() for label in target_cycle])
+                active_target_class = spec.normalize_target_group(self._config.active_target_class)
+                self._config.active_target_class = active_target_class
+                if active_target_class in target_cycle:
+                    self.class_combo.setCurrentIndex(target_cycle.index(active_target_class))
         self.class_combo.blockSignals(False)
 
     def _on_model_changed(self) -> None:

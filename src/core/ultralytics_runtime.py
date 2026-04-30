@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -36,9 +37,11 @@ class UltralyticsEngineModel:
         min_confidence: float,
         offset_x: int = 0,
         offset_y: int = 0,
+        target_class_ids: Sequence[int] | None = None,
         target_class_id: int | None = None,
         fov_bounds: tuple[int, int, int, int] | None = None,
     ) -> DetectionPayload:
+        class_filter = self._normalize_class_filter(target_class_ids, target_class_id)
         predict_kwargs = {
             "source": frame,
             "imgsz": self.input_size,
@@ -46,8 +49,8 @@ class UltralyticsEngineModel:
             "verbose": False,
             "max_det": _PREDICT_MAX_DETECTIONS,
         }
-        if target_class_id is not None:
-            predict_kwargs["classes"] = [int(target_class_id)]
+        if class_filter is not None:
+            predict_kwargs["classes"] = class_filter
 
         results = self._model.predict(**predict_kwargs)
         if not results:
@@ -70,8 +73,8 @@ class UltralyticsEngineModel:
             return EMPTY_DETECTION_PAYLOAD
 
         keep_mask = np.ones(len(xyxy), dtype=bool)
-        if target_class_id is not None:
-            keep_mask &= class_ids == int(target_class_id)
+        if class_filter is not None:
+            keep_mask &= np.isin(class_ids, np.asarray(class_filter, dtype=np.int32))
 
         if fov_bounds is not None:
             fov_left, fov_top, fov_right, fov_bottom = fov_bounds
@@ -142,3 +145,22 @@ class UltralyticsEngineModel:
         if hasattr(value, "numpy"):
             return value.numpy()
         return value
+
+    @staticmethod
+    def _normalize_class_filter(
+        target_class_ids: Sequence[int] | None,
+        target_class_id: int | None,
+    ) -> list[int] | None:
+        if target_class_ids is None:
+            if target_class_id is None:
+                return None
+            return [int(target_class_id)]
+
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for class_id in target_class_ids:
+            parsed = int(class_id)
+            if parsed not in seen:
+                normalized.append(parsed)
+                seen.add(parsed)
+        return normalized or None

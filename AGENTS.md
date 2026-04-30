@@ -1,5 +1,7 @@
 # AGENTS.md
 
+## 屏幕尺寸： 1920x1080
+
 ## Workspace
 
 - Repository: `D:\project\Axiom-AI-Aimbot`

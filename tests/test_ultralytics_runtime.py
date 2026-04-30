@@ -107,7 +107,7 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         self.assertEqual(model._model.predict_calls[0]["max_det"], 16)
         self.assertNotIn("classes", model._model.predict_calls[0])
 
-    def test_detect_can_filter_by_target_class_and_fov_before_materializing_lists(self) -> None:
+    def test_detect_can_filter_by_target_classes_and_fov_before_materializing_lists(self) -> None:
         fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
 
         with mock.patch("core.ultralytics_runtime.importlib.import_module", return_value=fake_module):
@@ -118,7 +118,7 @@ class UltralyticsRuntimeTests(unittest.TestCase):
             min_confidence=0.25,
             offset_x=5,
             offset_y=7,
-            target_class_id=3,
+            target_class_ids=[1, 3],
             fov_bounds=(54, 66, 76, 88),
         )
 
@@ -130,8 +130,37 @@ class UltralyticsRuntimeTests(unittest.TestCase):
         )
         self.assertFloatListAlmostEqual(payload.confidences.tolist(), [0.8])
         self.assertEqual(payload.class_ids.tolist(), [3])
-        self.assertEqual(model._model.predict_calls[0]["classes"], [3])
+        self.assertEqual(model._model.predict_calls[0]["classes"], [1, 3])
         self.assertEqual(model._model.predict_calls[0]["max_det"], 16)
+
+    def test_detect_filters_payload_to_target_class_group(self) -> None:
+        class _GroupYOLO(_FakeYOLO):
+            def predict(self, **kwargs):
+                self.predict_calls.append(kwargs)
+                boxes = _CustomBoxes(
+                    xyxy=[
+                        [10.0, 10.0, 30.0, 30.0],
+                        [40.0, 40.0, 60.0, 60.0],
+                        [70.0, 70.0, 90.0, 90.0],
+                    ],
+                    conf=[0.95, 0.85, 0.75],
+                    cls=[1.0, 0.0, 2.0],
+                )
+                return [_FakeResult(boxes)]
+
+        fake_module = types.SimpleNamespace(YOLO=_GroupYOLO)
+
+        with mock.patch("core.ultralytics_runtime.importlib.import_module", return_value=fake_module):
+            model = UltralyticsEngineModel("Model/test.engine", input_size=640)
+
+        payload = model.detect(
+            np.zeros((32, 32, 3), dtype=np.uint8),
+            min_confidence=0.25,
+            target_class_ids=[1, 0],
+        )
+
+        self.assertEqual(payload.class_ids.tolist(), [1, 0])
+        self.assertEqual(model._model.predict_calls[0]["classes"], [1, 0])
 
     def test_detect_filters_partial_fov_boxes_by_center_or_half_coverage(self) -> None:
         class _FovYOLO(_FakeYOLO):

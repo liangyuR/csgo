@@ -456,6 +456,24 @@ class AimStabilityTests(unittest.TestCase):
         self.assertEqual(config.model_id, "yolo12n_cs2")
         self.assertEqual(config.model_path, "Model/yolo12n_cs2.engine")
 
+    def test_apply_model_constraints_maps_legacy_target_classes_to_groups(self) -> None:
+        for legacy_class, expected_group in (("c", "c"), ("ch", "c"), ("t", "t"), ("th", "t")):
+            with self.subTest(legacy_class=legacy_class):
+                config = SimpleNamespace(
+                    model_id="yolo12n_cs2",
+                    model_path="Model/yolo12n_cs2.engine",
+                    model_input_size=0,
+                    active_target_class=legacy_class,
+                    detect_range_size=560,
+                    fov_size=900,
+                    width=1920,
+                    height=1080,
+                )
+
+                apply_model_constraints(config)
+
+                self.assertEqual(config.active_target_class, expected_group)
+
     def test_model_registry_resolves_engine_and_legacy_onnx_paths(self) -> None:
         legacy_spec = resolve_model_spec_from_path("Model/CS2.onnx")
         engine_spec = resolve_model_spec_from_path("Model/yolo12n_cs2.engine")
