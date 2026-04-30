@@ -53,6 +53,7 @@ from core.ultralytics_runtime import UltralyticsEngineModel
 from gui.disclaimer_dialog import DisclaimerDialog
 from gui.overlay import PyQtOverlay
 from gui.status_panel import StatusPanel
+from win_utils import stop_mouse_move_blocker
 detect_thread: Optional[threading.Thread] = None
 control_thread: Optional[threading.Thread] = None
 auto_fire_thread: Optional[threading.Thread] = None
@@ -74,6 +75,7 @@ def _stop_ai_threads(config: Config) -> None:
         control_thread.join()
     if auto_fire_thread is not None:
         auto_fire_thread.join()
+    stop_mouse_move_blocker()
 
 
 def _resolve_model_runtime_inputs(config: Config, model_id: str) -> tuple[object, str] | tuple[None, None]:

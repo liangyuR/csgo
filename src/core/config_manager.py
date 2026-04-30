@@ -105,6 +105,7 @@ class ConfigManager:
                 "AimToggle": config_instance.AimToggle,
                 "keep_detecting": config_instance.keep_detecting,
                 "always_aim": getattr(config_instance, "always_aim", False),
+                "block_user_mouse_on_aim": getattr(config_instance, "block_user_mouse_on_aim", True),
                 "fov_follow_mouse": config_instance.fov_follow_mouse,
                 "performance_mode": config_instance.performance_mode,
                 "max_queue_size": config_instance.max_queue_size,

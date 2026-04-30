@@ -54,8 +54,9 @@ fake_mss.exception = types.SimpleNamespace(ScreenShotError=RuntimeError)
 fake_mss.mss = lambda: None
 sys.modules.setdefault("mss", fake_mss)
 
+import core.ai_loop as ai_loop_module
 from core.ai_loop import _build_runtime_settings as build_detection_runtime_settings
-from core.ai_loop import _calculate_detection_region
+from core.ai_loop import _calculate_detection_region, _sync_user_mouse_block
 from core.config import apply_model_constraints, bump_runtime_refresh_token, migrate_config_data
 from core.control_loop import ControlLoopState, _select_target, run_control_step
 from core.detection_state import DetectionFrame, DetectionPayload, LatestDetectionState
@@ -184,6 +185,7 @@ class AimStabilityTests(unittest.TestCase):
         self.assertAlmostEqual(config.aim_pixel_ratio_x, 1.0)
         self.assertAlmostEqual(config.aim_pixel_ratio_y, 1.0)
         self.assertFalse(config.tracker_use_acceleration)
+        self.assertTrue(config.block_user_mouse_on_aim)
         self.assertEqual(config.controller_version, 3)
 
     def test_detection_runtime_defaults_to_stricter_min_confidence(self) -> None:
@@ -193,6 +195,25 @@ class AimStabilityTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(settings.min_confidence, 0.30)
+        self.assertTrue(settings.block_user_mouse_on_aim)
+
+    def test_user_mouse_block_sync_follows_aiming_state_and_toggle(self) -> None:
+        calls: list[bool] = []
+        original = ai_loop_module.set_user_mouse_move_blocked
+        ai_loop_module.set_user_mouse_move_blocked = calls.append
+        try:
+            settings = build_detection_runtime_settings(
+                SimpleNamespace(width=1920, height=1080),
+                get_default_model_spec(),
+            )
+
+            _sync_user_mouse_block(SimpleNamespace(AimToggle=True), settings, True)
+            _sync_user_mouse_block(SimpleNamespace(AimToggle=True), settings, False)
+            _sync_user_mouse_block(SimpleNamespace(AimToggle=False), settings, True)
+        finally:
+            ai_loop_module.set_user_mouse_move_blocked = original
+
+        self.assertEqual(calls, [True, False, False])
 
     def test_runtime_refresh_token_helper_increments_monotonically(self) -> None:
         config = SimpleNamespace(runtime_refresh_token=0)

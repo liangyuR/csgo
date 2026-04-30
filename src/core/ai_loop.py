@@ -12,6 +12,12 @@ from typing import TYPE_CHECKING, Protocol
 import win32api
 from win_utils.key_utils import is_key_pressed
 
+try:
+    from win_utils import set_user_mouse_move_blocked
+except ImportError:  # pragma: no cover - test stubs may omit this helper.
+    def set_user_mouse_move_blocked(_active: bool) -> None:
+        return None
+
 from .capture import ScreenCaptureBackend, create_capture_backend
 from .detection_state import DetectionFrame, DetectionPayload, LatestDetectionState, empty_detection_payload
 from .model_registry import ModelSpec
@@ -50,6 +56,7 @@ class DetectionRuntimeSettings:
     min_confidence: float
     keep_detecting: bool
     always_aim: bool
+    block_user_mouse_on_aim: bool
     fov_follow_mouse: bool
     fov_size: int
     detect_range_size: int
@@ -92,6 +99,7 @@ def _build_runtime_settings(config: Config, model_spec: ModelSpec) -> DetectionR
         min_confidence=float(getattr(config, "min_confidence", 0.30)),
         keep_detecting=bool(getattr(config, "keep_detecting", True)),
         always_aim=bool(getattr(config, "always_aim", False)),
+        block_user_mouse_on_aim=bool(getattr(config, "block_user_mouse_on_aim", True)),
         fov_follow_mouse=bool(getattr(config, "fov_follow_mouse", True)),
         fov_size=int(getattr(config, "fov_size", model_spec.input_size)),
         detect_range_size=int(getattr(config, "detect_range_size", model_spec.input_size)),
@@ -316,6 +324,11 @@ def _ensure_runtime_context(
     return settings, new_backend
 
 
+def _sync_user_mouse_block(config: Config, settings: DetectionRuntimeSettings, is_aiming: bool) -> None:
+    should_block = bool(getattr(config, "AimToggle", True)) and settings.block_user_mouse_on_aim and is_aiming
+    set_user_mouse_move_blocked(should_block)
+
+
 def ai_logic_loop(
     config: Config,
     model: InferenceModel,
@@ -358,6 +371,7 @@ def ai_logic_loop(
 
                 _update_crosshair_position(config, settings, half_width, half_height)
                 is_aiming = settings.always_aim or any(is_key_pressed(k) for k in config.AimKeys)
+                _sync_user_mouse_block(config, settings, is_aiming)
 
                 if not config.AimToggle or (not settings.keep_detecting and not is_aiming):
                     crosshair_x, crosshair_y = config.crosshairX, config.crosshairY
@@ -432,9 +446,11 @@ def ai_logic_loop(
                 remaining = desired_interval - (time.perf_counter() - loop_start_perf)
                 _wait_precisely(remaining)
             except Exception as e:
+                set_user_mouse_move_blocked(False)
                 logger.error("AI loop error: %s", e)
                 traceback.print_exc()
                 time.sleep(1.0)
     finally:
+        set_user_mouse_move_blocked(False)
         if capture_backend is not None:
             capture_backend.close()

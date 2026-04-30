@@ -180,6 +180,7 @@ class Config:
 
         self.keep_detecting: bool = True
         self.always_aim: bool = False
+        self.block_user_mouse_on_aim: bool = True
         self.fov_follow_mouse: bool = True
         self.control_loop_hz: float = 500.0
         self.control_stale_hold_ms: float = 12.0
@@ -235,6 +236,7 @@ class Config:
             "idle_detect_interval": self.idle_detect_interval,
             "keep_detecting": self.keep_detecting,
             "always_aim": self.always_aim,
+            "block_user_mouse_on_aim": self.block_user_mouse_on_aim,
             "fov_follow_mouse": self.fov_follow_mouse,
             "control_loop_hz": self.control_loop_hz,
             "control_stale_hold_ms": self.control_stale_hold_ms,
@@ -460,6 +462,7 @@ def _validate_stability_settings(config: Config) -> None:
     config.pid_kd_x = _clamp(float(getattr(config, "pid_kd_x", 0.012)), 0.0, 0.1)
     config.pid_kd_y = _clamp(float(getattr(config, "pid_kd_y", 0.012)), 0.0, 0.1)
     config.min_confidence = _clamp(float(getattr(config, "min_confidence", 0.30)), 0.05, 0.9)
+    config.block_user_mouse_on_aim = bool(getattr(config, "block_user_mouse_on_aim", True))
 
 
 def _migrate_model_settings(config: Config) -> None:

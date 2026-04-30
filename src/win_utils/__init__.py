@@ -37,6 +37,14 @@ from .mouse_click import (
     test_mouse_click_methods,
 )
 
+from .mouse_move_blocker import (
+    allow_program_mouse_move,
+    is_user_mouse_move_blocked,
+    set_user_mouse_move_blocked,
+    start_mouse_move_blocker,
+    stop_mouse_move_blocker,
+)
+
 # 按鍵檢測
 from .key_utils import is_key_pressed
 
@@ -63,6 +71,7 @@ def send_mouse_move(dx, dy, method=None):
     """主要滑鼠移動函數 (DDXoft)"""
     if abs(dx) < 1 and abs(dy) < 1:
         return
+    allow_program_mouse_move()
     send_mouse_move_ddxoft(dx, dy)
 
 
@@ -90,6 +99,11 @@ __all__ = [
     'send_mouse_click',
     'send_mouse_click_ddxoft',
     'test_mouse_click_methods',
+    'allow_program_mouse_move',
+    'is_user_mouse_move_blocked',
+    'set_user_mouse_move_blocked',
+    'start_mouse_move_blocker',
+    'stop_mouse_move_blocker',
 
     # 按鍵檢測
     'is_key_pressed',
