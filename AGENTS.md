@@ -5,7 +5,18 @@
 ## 项目简介
 
 - 用于CSGO2的自动识别，瞄准，开火
-- 核心使用 YOLO 检测
+- 核心组件
+ - YOLO 检测
+ - ddxoft 鼠标控制
+ - Qt UI
+
+## 启动方式
+
+- 运行 ./launch.bat
+
+## Docs
+
+- 屏幕标定: `./Docs/calibration.md`
 
 ## 工作区
 
